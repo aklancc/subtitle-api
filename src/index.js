@@ -154,7 +154,7 @@ function subtitleLanguageRank(item) {
   const scriptHints = [item.fileName, item.filename, item.release, item.media, item.media_name].filter(Boolean).join(" ").toLowerCase();
   const combined = language + " " + display + " " + scriptHints;
 
-  if (/zh[-_ ]?(cn|hans)|simplified|简体|(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk?(?:[._ -]|$)/i.test(combined)) return 0;
+  if (/zh[-_ ]?(cn|hans)|simplified|简体|(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk(?:[._ -]|$)/i.test(combined)) return 0;
   if (/zh[-_ ]?(tw|hk|hant)|traditional|繁体|(?:^|[._ -])cht(?:[._ -]|$)|big5/i.test(combined)) return 1;
   if (language === "zh" || combined.includes("chinese") || combined.includes("中文")) return 2;
   return 3;
@@ -321,7 +321,7 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
       const ai = productionType === 1 || productionType === 3 || /machine|ai|translated/i.test(String(item.production_type_name || ""));
       let display = ({ ZH: "Chinese", ZHT: "Chinese (traditional)", ZHC: "Chinese (simplified)", EN: "English" })[lang] || lang;
       const fileHints = [file.name, file.release_name, item.name, item.release_name].filter(Boolean).join(" ").toLowerCase();
-      if (lang === "ZH" && /(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk?(?:[._ -]|$)|simplified|hans|简体/i.test(fileHints)) display = "Chinese (simplified)";
+      if (lang === "ZH" && /(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk(?:[._ -]|$)|simplified|hans|简体/i.test(fileHints)) display = "Chinese (simplified)";
       else if (lang === "ZH" && /(?:^|[._ -])cht(?:[._ -]|$)|big5|traditional|hant|繁体/i.test(fileHints)) display = "Chinese (traditional)";
       return {
         id: String(file.file_n_id || item.sd_id || item.id || ""),
