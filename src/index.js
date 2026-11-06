@@ -395,19 +395,28 @@ function subtitleStats(items) {
 
 function sortSubtitles(items, sort) {
   const rows = [...items];
-  if (sort === "popular") {
-    return rows.sort((a, b) => (Number(b.downloadCount) || 0) - (Number(a.downloadCount) || 0) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
-  }
-  if (sort === "provider") {
-    return rows.sort((a, b) => String(a.provider || "").localeCompare(String(b.provider || "")) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
-  }
-  if (sort === "format") {
-    return rows.sort((a, b) => String(a.format || "").localeCompare(String(b.format || "")) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
-  }
-  if (sort === "ai") {
-    return rows.sort((a, b) => Number(Boolean(b.ai)) - Number(Boolean(a.ai)) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
-  }
-  return rows.sort((a, b) => subtitleLanguageRank(a) - subtitleLanguageRank(b) || Number(Boolean(a.ai)) - Number(Boolean(b.ai)) || (Number(b.downloadCount) || 0) - (Number(a.downloadCount) || 0));
+  // Always put every Chinese subtitle category before non-Chinese results.
+  // Keep the selected sort order within each language-priority group.
+  const compareWithinGroup = (a, b) => {
+    if (sort === "popular") {
+      return (Number(b.downloadCount) || 0) - (Number(a.downloadCount) || 0);
+    }
+    if (sort === "provider") {
+      return String(a.provider || "").localeCompare(String(b.provider || ""));
+    }
+    if (sort === "format") {
+      return String(a.format || "").localeCompare(String(b.format || ""));
+    }
+    if (sort === "ai") {
+      return Number(Boolean(b.ai)) - Number(Boolean(a.ai));
+    }
+    return Number(Boolean(a.ai)) - Number(Boolean(b.ai)) ||
+      (Number(b.downloadCount) || 0) - (Number(a.downloadCount) || 0);
+  };
+  return rows.sort((a, b) =>
+    subtitleLanguageRank(a) - subtitleLanguageRank(b) ||
+    compareWithinGroup(a, b)
+  );
 }
 
 function titleMatchesResponse(data) {
