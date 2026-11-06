@@ -219,7 +219,13 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
       };
     });
   });
-  return { enabled: true, ok: true, subtitles: rows };
+  const requestedLanguage = (params.get("language") || "").toLowerCase();
+  const filteredRows = requestedLanguage
+    ? rows.filter((row) => requestedLanguage === "zh"
+      ? ["zh", "zhc", "zht", "zh-cn", "zh-tw"].includes(String(row.language || "").toLowerCase())
+      : String(row.language || "").toLowerCase() === requestedLanguage)
+    : rows;
+  return { enabled: true, ok: true, subtitles: filteredRows };
 }
 
 function subtitleDedupeKey(item) {
@@ -249,8 +255,8 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "3.0.0",
-        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download"],
+        version: "3.1.0",
+        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection"],
       });
     }
 
