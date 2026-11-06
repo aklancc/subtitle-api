@@ -442,8 +442,8 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "5.1.0",
-        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection"],
+        version: "5.2.0",
+        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts"],
       });
     }
 
