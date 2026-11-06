@@ -94,7 +94,7 @@ async function tmdbSearch(query, type, year, env) {
 
   const results = (payload.results || [])
     .filter((item) => item.media_type !== "person")
-    .filter((item) => endpointType === "multi" || item.media_type === endpointType)
+    .filter((item) => endpointType === "multi" || !item.media_type || item.media_type === endpointType)
     .map((item) => {
       const mediaType = item.media_type || endpointType;
       const releaseDate = item.release_date || item.first_air_date || "";
