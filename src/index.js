@@ -23,7 +23,16 @@ function authorized(request, env) {
   return request.headers.get("Authorization") === `Bearer ${env.API_ACCESS_KEY}`;
 }
 
+function subtitleIsBilingual(item) {
+  const hints = [
+    item.display, item.language, item.fileName, item.filename, item.release,
+    item.media, item.media_name, item.name, item.release_name,
+  ].filter(Boolean).join(" ").toLowerCase();
+  return /中英双语|中英文双语|双语字幕|bilingual|chinese\s*[+&/|_-]\s*english|english\s*[+&/|_-]\s*chinese|chs?\s*[+&/|_-]\s*eng|eng\s*[+&/|_-]\s*chs?|cht\s*[+&/|_-]\s*eng|eng\s*[+&/|_-]\s*cht|zh[-_ ]?en|en[-_ ]?zh/i.test(hints);
+}
+
 function subtitleLanguageRank(item) {
+  if (subtitleIsBilingual(item)) return -1;
   const language = String(item.language || "").toLowerCase();
   const display = String(item.display || "").toLowerCase();
   const scriptHints = [item.fileName, item.filename, item.release, item.media, item.media_name].filter(Boolean).join(" ").toLowerCase();
@@ -223,6 +232,7 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
 }
 
 function subtitleCategory(item) {
+  if (subtitleIsBilingual(item)) return "zh-bilingual";
   const rank = subtitleLanguageRank(item);
   if (rank === 0) return "zh-Hans";
   if (rank === 1) return "zh-Hant";
@@ -243,6 +253,7 @@ function subtitleDedupeKey(item) {
 function subtitleStats(items) {
   const stats = {
     total: items.length,
+    bilingual: 0,
     simplified: 0,
     traditional: 0,
     chineseOther: 0,
@@ -253,7 +264,8 @@ function subtitleStats(items) {
   };
   for (const item of items) {
     const category = subtitleCategory(item);
-    if (category === "zh-Hans") stats.simplified++;
+    if (category === "zh-bilingual") stats.bilingual++;
+    else if (category === "zh-Hans") stats.simplified++;
     else if (category === "zh-Hant") stats.traditional++;
     else if (category === "zh-other") stats.chineseOther++;
     else stats.otherLanguages++;
@@ -305,8 +317,8 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "4.0.0",
-        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort"],
+        version: "5.0.0",
+        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter"],
       });
     }
 
@@ -429,8 +441,17 @@ export default {
         }
       }
 
+      const requestedCategory = (url.searchParams.get("category") || "").toLowerCase();
+      if (requestedCategory && !["bilingual", "zh-bilingual", "simplified", "zh-hans", "traditional", "zh-hant", "chinese", "other"].includes(requestedCategory)) {
+        return json({ ok: false, error: "InvalidCategory", message: "category 只能是 bilingual、simplified、traditional、chinese 或 other。" }, 400);
+      }
       const requestedLanguage = (url.searchParams.get("language") || "").toLowerCase();
       let filtered = unique;
+      if (requestedCategory === "bilingual" || requestedCategory === "zh-bilingual") filtered = filtered.filter((item) => item.category === "zh-bilingual");
+      else if (requestedCategory === "simplified" || requestedCategory === "zh-hans") filtered = filtered.filter((item) => item.category === "zh-Hans");
+      else if (requestedCategory === "traditional" || requestedCategory === "zh-hant") filtered = filtered.filter((item) => item.category === "zh-Hant");
+      else if (requestedCategory === "chinese") filtered = filtered.filter((item) => ["zh-bilingual", "zh-Hans", "zh-Hant", "zh-other"].includes(item.category));
+      else if (requestedCategory === "other") filtered = filtered.filter((item) => item.category === "other");
       if (requestedLanguage === "zh") {
         filtered = filtered.filter((item) => ["zh-Hans", "zh-Hant", "zh-other"].includes(item.category));
       } else if (requestedLanguage === "zh-cn" || requestedLanguage === "zh-hans") {
@@ -461,7 +482,7 @@ export default {
         episode: episode ? Number(episode) : null,
         count: sorted.length,
         stats,
-        filters: { language: requestedLanguage || "all", ai: aiFilter, sort },
+        filters: { language: requestedLanguage || "all", category: requestedCategory || "all", ai: aiFilter, sort },
         providers: providerStatus,
         subtitles: sorted,
       }, 200, { ...wyzieHeaders, "Cache-Control": "no-store" });
