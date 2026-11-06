@@ -24,11 +24,127 @@ function authorized(request, env) {
 }
 
 function subtitleIsBilingual(item) {
+  if (item.bilingualContent === true) return true;
   const hints = [
     item.display, item.language, item.fileName, item.filename, item.release,
     item.media, item.media_name, item.name, item.release_name,
   ].filter(Boolean).join(" ").toLowerCase();
   return /中英双语|中英文双语|双语字幕|bilingual|chinese\s*[+&/|_-]\s*english|english\s*[+&/|_-]\s*chinese|chs?\s*[+&/|_-]\s*eng|eng\s*[+&/|_-]\s*chs?|cht\s*[+&/|_-]\s*eng|eng\s*[+&/|_-]\s*cht|zh[-_ ]?en|en[-_ ]?zh/i.test(hints);
+}
+
+async function unzipSubtitleText(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const texts = [];
+  let eocd = -1;
+  for (let i = Math.max(0, bytes.length - 65557); i <= bytes.length - 22; i++) {
+    if (view.getUint32(i, true) === 0x06054b50) eocd = i;
+  }
+  if (eocd < 0) return "";
+  const entries = view.getUint16(eocd + 10, true);
+  let offset = view.getUint32(eocd + 16, true);
+  for (let n = 0; n < entries && n < 20; n++) {
+    if (view.getUint32(offset, true) !== 0x02014b50) break;
+    const method = view.getUint16(offset + 10, true);
+    const compressedSize = view.getUint32(offset + 20, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const name = decoder.decode(bytes.slice(offset + 46, offset + 46 + nameLength));
+    const ext = name.toLowerCase().split(".").pop();
+    if (["srt", "ass", "ssa", "vtt", "txt"].includes(ext) && compressedSize <= 5 * 1024 * 1024) {
+      const localNameLength = view.getUint16(localOffset + 26, true);
+      const localExtraLength = view.getUint16(localOffset + 28, true);
+      const start = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = bytes.slice(start, start + compressedSize);
+      try {
+        let raw;
+        if (method === 0) raw = compressed;
+        else if (method === 8) {
+          const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+          raw = new Uint8Array(await new Response(stream).arrayBuffer());
+        } else raw = null;
+        if (raw) texts.push(decoder.decode(raw));
+      } catch {}
+    }
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return texts.join("\n");
+}
+
+function subtitleTextLooksBilingual(text) {
+  const normalized = String(text || "").replace(/\r/g, "");
+  let cues = [];
+  if (/^\s*Dialogue:/mi.test(normalized)) {
+    cues = normalized.split(/\n/).filter((line) => /^\s*Dialogue:/i.test(line)).map((line) => line.slice(line.indexOf(",", line.indexOf(",") + 1) + 1).replace(/\\N|\\n/g, " ").replace(/\{[^}]*\}/g, ""));
+  } else {
+    cues = normalized.split(/\n\s*\n/).map((block) => block.split("\n").filter((line) => !/^\s*\d+\s*$/.test(line) && !/^\s*(?:WEBVTT|NOTE|STYLE|REGION|[\d:,.-]+\s*-->).*$/.test(line)).join(" ").replace(/<[^>]*>/g, "").trim()).filter(Boolean);
+  }
+  let mixed = 0;
+  let meaningful = 0;
+  for (const cue of cues) {
+    const clean = cue.replace(/\{[^}]*\}/g, "").trim();
+    if (clean.length < 4) continue;
+    const hasChinese = /[\u3400-\u9fff]/.test(clean);
+    const hasEnglish = /[A-Za-z]{2,}/.test(clean);
+    if (hasChinese || hasEnglish) meaningful++;
+    if (hasChinese && hasEnglish) mixed++;
+  }
+  return meaningful >= 8 && mixed >= 5 && mixed / meaningful >= 0.2;
+}
+
+async function inspectBilingualContent(item, env) {
+  try {
+    let target;
+    const sourceUrl = String(item.url || "");
+    if (!sourceUrl) return false;
+    const parsed = new URL(sourceUrl);
+    if (item.source === "subdl" || item.provider === "SubDL") {
+      const path = parsed.searchParams.get("path");
+      if (!path || !path.startsWith("/subtitle/") || !env.SUBDL_API_KEY) return false;
+      target = new URL(path, "https://dl.subdl.com");
+      target.searchParams.set("api_key", env.SUBDL_API_KEY);
+    } else {
+      if (parsed.protocol !== "https:" || parsed.hostname !== "sub.wyzie.io") return false;
+      target = parsed;
+    }
+    const response = await fetch(target.toString(), { headers: { "Accept": "*/*" } });
+    if (!response.ok) return false;
+    const length = Number(response.headers.get("Content-Length") || 0);
+    if (length > 8 * 1024 * 1024) return false;
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > 8 * 1024 * 1024) return false;
+    const bytes = new Uint8Array(buffer);
+    let text = "";
+    if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+      text = await unzipSubtitleText(buffer);
+    } else {
+      text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+      if (text.includes("\uFFFD")) {
+        try { text = new TextDecoder("gb18030", { fatal: false }).decode(buffer); } catch {}
+      }
+    }
+    return subtitleTextLooksBilingual(text);
+  } catch {
+    return false;
+  }
+}
+
+async function analyzeBilingualSubtitles(items, env) {
+  const candidates = items.filter((item) => subtitleLanguageRank(item) <= 2 && !item.bilingualChecked);
+  const limited = candidates.slice(0, 15);
+  const results = await Promise.all(limited.map(async (item) => ({
+    item,
+    bilingual: await inspectBilingualContent(item, env),
+  })));
+  for (const result of results) {
+    result.item.bilingualChecked = true;
+    result.item.bilingualContent = result.bilingual;
+    if (result.bilingual) result.item.category = "zh-bilingual";
+  }
+  return items;
 }
 
 function subtitleLanguageRank(item) {
@@ -317,8 +433,8 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "5.0.0",
-        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter"],
+        version: "5.1.0",
+        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection"],
       });
     }
 
@@ -442,6 +558,11 @@ export default {
       }
 
       const requestedCategory = (url.searchParams.get("category") || "").toLowerCase();
+      const bilingualMode = (url.searchParams.get("bilingual") || "").toLowerCase();
+      if (requestedCategory === "bilingual" || requestedCategory === "zh-bilingual" || bilingualMode === "content") {
+        await analyzeBilingualSubtitles(unique, env);
+        for (const item of unique) item.category = subtitleCategory(item);
+      }
       if (requestedCategory && !["bilingual", "zh-bilingual", "simplified", "zh-hans", "traditional", "zh-hant", "chinese", "other"].includes(requestedCategory)) {
         return json({ ok: false, error: "InvalidCategory", message: "category 只能是 bilingual、simplified、traditional、chinese 或 other。" }, 400);
       }
