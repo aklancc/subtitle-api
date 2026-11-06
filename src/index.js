@@ -21,7 +21,11 @@ function json(data, status = 200, extraHeaders = {}) {
 
 function authorized(request, env) {
   if (!env.API_ACCESS_KEY) return true;
-  return request.headers.get("Authorization") === `Bearer ${env.API_ACCESS_KEY}`;
+  const bearer = request.headers.get("Authorization") === `Bearer ${env.API_ACCESS_KEY}`;
+  if (bearer) return true;
+  const url = new URL(request.url);
+  // ASSRT-compatible clients commonly send their token as a query parameter.
+  return url.pathname.startsWith("/v1/") && url.searchParams.get("token") === env.API_ACCESS_KEY;
 }
 
 function subtitleIsBilingual(item) {
@@ -476,6 +480,119 @@ function sortSubtitles(items, sort) {
   );
 }
 
+function assrtLanguage(item) {
+  const code = normalizeLanguageCode(item).toLowerCase();
+  const category = item.category || subtitleCategory(item);
+  const desc = item.display || item.language || "未知语言";
+  const langlist = {};
+  if (code.startsWith("zh") || category.startsWith("zh-")) langlist.langchi = true;
+  if (code === "en" || code.startsWith("en-")) langlist.langeng = true;
+  if (code === "ja" || code.startsWith("ja-")) langlist.langjap = true;
+  if (code === "ko" || code.startsWith("ko-")) langlist.langkor = true;
+  if (category === "zh-bilingual") langlist.langdou = true;
+  return { desc, langlist };
+}
+
+async function assrtCachePut(id, record) {
+  const key = new Request("https://subtitle-api-cache.invalid/assrt/" + id);
+  await caches.default.put(key, new Response(JSON.stringify(record), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" },
+  }));
+}
+
+async function assrtCacheGet(id) {
+  const key = new Request("https://subtitle-api-cache.invalid/assrt/" + id);
+  const response = await caches.default.match(key);
+  if (!response) return null;
+  try { return await response.json(); } catch { return null; }
+}
+
+function assrtId() {
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
+  return String((value[0] & 0x7fffffff) || 1);
+}
+
+async function assrtSearch(q, params, env, origin) {
+  const episodeMatch = q.match(/\\bS(\\d{1,2})\\s*E(\\d{1,3})\\b/i);
+  const cleanQuery = q.replace(/\\.[a-z0-9]{2,4}$/i, "").replace(/[._]+/g, " ").replace(/\\bS\\d{1,2}\\s*E\\d{1,3}\\b/i, " ").replace(/\\b(2160p|1080p|720p|480p|WEB[- .]?DL|BluRay|HDR|HEVC|x264|x265)\\b/ig, " ").replace(/\\s+/g, " ").trim();
+  const found = await tmdbSearch(cleanQuery || q, "multi", null, env);
+  if (found.error) return { error: found.error, status: found.status || 502 };
+  const candidate = (found.results || []).find((item) => item.media_type === "movie" || item.media_type === "tv");
+  if (!candidate) return { rows: [], total: 0 };
+
+  const searchParams = new URLSearchParams();
+  if (episodeMatch) {
+    searchParams.set("season", String(Number(episodeMatch[1])));
+    searchParams.set("episode", String(Number(episodeMatch[2])));
+  }
+  for (const key of ["language", "format", "source", "origin", "encoding", "hi", "release", "file", "filename", "fileName"]) {
+    if (params.has(key)) searchParams.set(key, params.get(key));
+  }
+  if (!searchParams.has("source")) searchParams.set("source", "all");
+
+  const providerChoice = (params.get("provider") || "all").toLowerCase();
+  const tasks = [];
+  if (providerChoice !== "subdl") tasks.push(["wyzie", wyzieSearch(String(candidate.tmdb_id), searchParams, env)]);
+  if (providerChoice !== "wyzie") tasks.push(["subdl", subdlSearch(String(candidate.tmdb_id), searchParams, env, candidate.media_type, origin)]);
+  const settled = await Promise.all(tasks.map(async ([name, promise]) => [name, await promise]));
+  const rows = [];
+  for (const [name, result] of settled) {
+    if (name === "wyzie" && !result.response) {
+      const list = Array.isArray(result.data) ? result.data : (result.data?.subtitles || []);
+      rows.push(...list.map((item) => ({ ...item, provider: "Wyzie" })));
+    } else if (name === "subdl" && result.ok && result.subtitles) {
+      rows.push(...result.subtitles);
+    }
+  }
+  const unique = [];
+  const seen = new Set();
+  for (const item of rows) {
+    const key = subtitleDedupeKey(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push({ ...item, category: subtitleCategory(item) });
+    }
+  }
+  const sorted = sortSubtitles(unique, "chinese");
+  return { rows: sorted, total: sorted.length, media: candidate };
+}
+
+function assrtJson(status, sub, httpStatus = 200) {
+  return json({ status, sub }, httpStatus, { "Cache-Control": "no-store" });
+}
+
+async function assrtDownloadResponse(record, env) {
+  let target;
+  try {
+    const sourceUrl = new URL(record.item.url);
+    if (record.provider === "SubDL" || sourceUrl.origin === "https://subtitle-api.alanchen123.workers.dev") {
+      const path = sourceUrl.searchParams.get("path");
+      if (!path || !path.startsWith("/subtitle/") || !env.SUBDL_API_KEY) {
+        return json({ status: 20900, error: "subtitle download unavailable" }, 404);
+      }
+      target = new URL(path, "https://dl.subdl.com");
+      target.searchParams.set("api_key", env.SUBDL_API_KEY);
+    } else if (sourceUrl.protocol === "https:" && sourceUrl.hostname === "sub.wyzie.io") {
+      target = sourceUrl;
+    } else if (sourceUrl.protocol === "https:" && sourceUrl.hostname === "dl.subdl.com" && env.SUBDL_API_KEY) {
+      target = sourceUrl;
+      target.searchParams.set("api_key", env.SUBDL_API_KEY);
+    } else {
+      return json({ status: 20900, error: "unsupported subtitle URL" }, 404);
+    }
+  } catch {
+    return json({ status: 20900, error: "invalid subtitle URL" }, 404);
+  }
+  const response = await fetch(target.toString(), { headers: { "Accept": "*/*" } });
+  const headers = new Headers(corsHeaders);
+  headers.set("Cache-Control", "no-store");
+  headers.set("Content-Type", response.headers.get("Content-Type") || "application/octet-stream");
+  headers.set("Content-Disposition", response.headers.get("Content-Disposition") || 'attachment; filename="subtitle"');
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(response.body, { status: response.status, headers });
+}
+
 function titleMatchesResponse(data) {
   return json({
     ok: true,
@@ -533,6 +650,90 @@ export default {
         authConfigured: Boolean(env.API_ACCESS_KEY),
         message: env.API_ACCESS_KEY ? "API key authenticated." : "API key authentication is not enabled; no key is required.",
       });
+    }
+
+    // ASSRT-compatible API: keep the native /v1/* paths and response envelope.
+    if (requestedPath === "/v1/user/quota") {
+      return assrtJson(0, { result: "succeed", action: "quota", quota: 20 });
+    }
+
+    if (requestedPath === "/v1/sub/search") {
+      const q = (url.searchParams.get("q") || "").trim();
+      if (q.length < 3) return assrtJson(101, { result: "failed", action: "search", error: "query too short" }, 400);
+      if (!env.WYZIE_API_KEY) return assrtJson(50001, { result: "failed", action: "search", error: "subtitle provider is not configured" }, 503);
+      const result = await assrtSearch(q, url.searchParams, env, url.origin);
+      if (result.error) return assrtJson(50002, { result: "failed", action: "search", error: result.error }, result.status || 502);
+      const pos = Math.max(0, Number(url.searchParams.get("pos") || 0) || 0);
+      const cnt = Math.min(15, Math.max(1, Number(url.searchParams.get("cnt") || 15) || 15));
+      const pageRows = result.rows.slice(pos, pos + cnt);
+      const subs = [];
+      for (const item of pageRows) {
+        let id = assrtId();
+        // A short-lived edge cache bridges ASSRT's numeric-ID detail flow to provider download URLs.
+        for (let attempt = 0; attempt < 3 && await assrtCacheGet(id); attempt++) id = assrtId();
+        await assrtCachePut(id, { provider: item.provider || "Wyzie", item, title: result.media?.title || q, query: q });
+        const detailUrl = new URL("/v1/sub/download", url.origin);
+        detailUrl.searchParams.set("id", id);
+        const token = url.searchParams.get("token");
+        if (token) detailUrl.searchParams.set("token", token);
+        const lang = assrtLanguage(item);
+        const fileName = item.fileName || item.filename || item.release || result.media?.title || q;
+        subs.push({
+          id: Number(id),
+          native_name: item.media || item.media_name || result.media?.title || q,
+          videoname: item.release || item.fileName || q,
+          revision: 0,
+          subtype: item.format || "Unknown",
+          desc: lang.desc,
+          upload_time: "",
+          vote_score: 0,
+          release_site: item.provider || "Aggregated",
+          lang,
+          filename: fileName,
+        });
+      }
+      return assrtJson(0, { subs, action: "search", keyword: q, result: "succeed", total: result.total, pos, cnt });
+    }
+
+    if (requestedPath === "/v1/sub/detail") {
+      const id = (url.searchParams.get("id") || "").trim();
+      if (!/^\\d{1,10}$/.test(id)) return assrtJson(20900, { result: "failed", action: "detail", error: "invalid subtitle id" }, 400);
+      const record = await assrtCacheGet(id);
+      if (!record) return assrtJson(20900, { result: "failed", action: "detail", error: "subtitle result expired; search again" }, 404);
+      const downloadUrl = new URL("/v1/sub/download", url.origin);
+      downloadUrl.searchParams.set("id", id);
+      const token = url.searchParams.get("token");
+      if (token) downloadUrl.searchParams.set("token", token);
+      const item = record.item || {};
+      const lang = assrtLanguage(item);
+      return assrtJson(0, {
+        result: "succeed",
+        action: "detail",
+        subs: [{
+          id: Number(id),
+          filename: item.fileName || item.filename || item.release || "subtitle",
+          native_name: item.media || item.media_name || record.title || record.query || "",
+          down_count: item.downloadCount || 0,
+          revision: 0,
+          upload_time: "",
+          url: downloadUrl.toString(),
+          size: 0,
+          producer: { producer: item.provider || "Aggregated", uploader: item.provider || "Aggregated" },
+          subtype: item.format || "Unknown",
+          title: item.release || item.fileName || record.title || "",
+          videoname: item.release || record.query || "",
+          vote_score: 0,
+          release_site: item.provider || "Aggregated",
+          lang,
+        }],
+      });
+    }
+
+    if (requestedPath === "/v1/sub/download") {
+      const id = (url.searchParams.get("id") || "").trim();
+      const record = /^\\d{1,10}$/.test(id) ? await assrtCacheGet(id) : null;
+      if (!record) return assrtJson(20900, { result: "failed", action: "download", error: "subtitle result expired; search again" }, 404);
+      return assrtDownloadResponse(record, env);
     }
 
     if (!env.WYZIE_API_KEY) {
