@@ -435,7 +435,13 @@ export default {
     }
 
     const url = new URL(request.url);
-    const path = url.pathname;
+    // Stable, versioned aliases. Keep the original /api/* routes working for existing clients.
+    const requestedPath = url.pathname;
+    const path = requestedPath === "/api/v1/health"
+      ? "/health"
+      : requestedPath.startsWith("/api/v1/")
+        ? requestedPath.replace(/^\/api\/v1/, "/api")
+        : requestedPath;
 
     if (path === "/" || path === "/health") {
       return json({
@@ -702,9 +708,14 @@ export default {
     return json({
       ok: false,
       error: "NotFound",
-      version: "3.0.0",
+      version: "5.2.0",
+      apiVersion: "v1",
       endpoints: [
         "/health",
+        "/api/v1/health",
+        "/api/v1/title-search?query=肖申克的救赎&type=movie",
+        "/api/v1/search?id=tt0111161",
+        "/api/v1/download?url=SEARCH_RESULT_URL",
         "/api/title-search?query=肖申克的救赎&type=movie",
         "/api/search?id=tt0111161",
         "/api/search?title=The%20Shawshank%20Redemption&type=movie&year=1994",
