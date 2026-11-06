@@ -633,9 +633,9 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "5.4.0",
+        version: "5.6.0",
         apiVersion: "v1",
-        features: ["versioned-v1-routes", "normalized-v1-response", "versioned-download-proxy", "title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts"],
+        features: ["versioned-v1-routes", "normalized-v1-response", "versioned-download-proxy", "title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts", "assrt-compatible-api", "assrt-token-query-auth", "assrt-detail-cache"],
       });
     }
 
@@ -1029,7 +1029,7 @@ export default {
     return json({
       ok: false,
       error: "NotFound",
-      version: "5.4.0",
+      version: "5.6.0",
       apiVersion: "v1",
       endpoints: [
         "/health",
