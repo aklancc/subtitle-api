@@ -354,7 +354,12 @@ export default {
         const key = subtitleDedupeKey(item);
         if (!seen.has(key)) { seen.add(key); unique.push(item); }
       }
-      const sorted = unique.sort((a, b) => subtitleLanguageRank(a) - subtitleLanguageRank(b));
+      const aiFilter = (url.searchParams.get("ai") || "all").toLowerCase();
+      if (!["all", "true", "false"].includes(aiFilter)) {
+        return json({ ok: false, error: "InvalidAIFilter", message: "ai 只能是 all、true 或 false。" }, 400);
+      }
+      const filtered = aiFilter === "all" ? unique : unique.filter((item) => Boolean(item.ai) === (aiFilter === "true"));
+      const sorted = filtered.sort((a, b) => subtitleLanguageRank(a) - subtitleLanguageRank(b));
       return json({
         ok: true,
         resolved,
