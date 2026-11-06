@@ -1,3 +1,4 @@
+import { UI } from "./ui.js";
 const UPSTREAM = "https://sub.wyzie.io";
 const TMDB = "https://api.themoviedb.org/3";
 
@@ -500,7 +501,17 @@ export default {
         ? requestedPath.replace(/^\/api\/v1/, "/api")
         : requestedPath;
 
-    if (path === "/" || path === "/health") {
+    if (path === "/") {
+      return new Response(UI, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
+
+    if (path === "/health") {
       return json({
         ok: true,
         service: "subtitle-api",
