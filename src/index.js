@@ -219,13 +219,7 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
       };
     });
   });
-  const requestedLanguage = (params.get("language") || "").toLowerCase();
-  const filteredRows = requestedLanguage
-    ? rows.filter((row) => requestedLanguage === "zh"
-      ? ["zh", "zhc", "zht", "zh-cn", "zh-tw"].includes(String(row.language || "").toLowerCase())
-      : String(row.language || "").toLowerCase() === requestedLanguage)
-    : rows;
-  return { enabled: true, ok: true, subtitles: filteredRows };
+  return { enabled: true, ok: true, subtitles: rows };
 }
 
 function subtitleCategory(item) {
@@ -437,8 +431,10 @@ export default {
 
       const requestedLanguage = (url.searchParams.get("language") || "").toLowerCase();
       let filtered = unique;
-      if (requestedLanguage === "zh" || requestedLanguage === "zh-cn" || requestedLanguage === "zh-hans") {
+      if (requestedLanguage === "zh") {
         filtered = filtered.filter((item) => ["zh-Hans", "zh-Hant", "zh-other"].includes(item.category));
+      } else if (requestedLanguage === "zh-cn" || requestedLanguage === "zh-hans") {
+        filtered = filtered.filter((item) => item.category === "zh-Hans");
       } else if (requestedLanguage === "zh-tw" || requestedLanguage === "zh-hk" || requestedLanguage === "zh-hant") {
         filtered = filtered.filter((item) => item.category === "zh-Hant");
       } else if (requestedLanguage) {
