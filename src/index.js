@@ -156,6 +156,61 @@ async function wyzieSearch(id, params, env) {
   };
 }
 
+async function subdlSearch(id, params, env, type) {
+  if (!env.SUBDL_API_KEY) return { enabled: false, reason: "MissingSecret" };
+  const api = new URL("https://api.subdl.com/api/v1/subtitles");
+  api.searchParams.set("api_key", env.SUBDL_API_KEY);
+  if (/^tt\\d+$/.test(id)) api.searchParams.set("imdb_id", id);
+  else api.searchParams.set("tmdb_id", id);
+  if (type === "movie" || type === "tv") api.searchParams.set("type", type);
+  if (params.get("season")) api.searchParams.set("season_number", params.get("season"));
+  if (params.get("episode")) api.searchParams.set("episode_number", params.get("episode"));
+  api.searchParams.set("subs_per_page", "30");
+  api.searchParams.set("unpack", "1");
+  api.searchParams.set("releases", "1");
+  const response = await fetch(api.toString(), { headers: { "Accept": "application/json" } });
+  const raw = await response.text();
+  if (!response.ok) return { enabled: true, ok: false, status: response.status, error: raw.slice(0, 300) };
+  let payload;
+  try { payload = JSON.parse(raw); } catch { return { enabled: true, ok: false, error: "InvalidJSON" }; }
+  if (payload.status === false) return { enabled: true, ok: false, error: payload.error || "SubDL error" };
+  const rows = (payload.subtitles || []).flatMap((item) => {
+    const files = Array.isArray(item.unpack_files) && item.unpack_files.length ? item.unpack_files : [item];
+    return files.map((file) => {
+      const lang = String(file.language || item.language || "").toUpperCase();
+      const rawUrl = file.url || item.url || "";
+      const downloadUrl = rawUrl.startsWith("http") ? rawUrl : rawUrl ? `https://dl.subdl.com${rawUrl}` : null;
+      const productionType = Number(item.production_type ?? file.production_type ?? 0);
+      const ai = productionType === 1 || productionType === 3 || /machine|ai|translated/i.test(String(item.production_type_name || ""));
+      const display = ({ ZH: "Chinese", ZHT: "Chinese (traditional)", ZHC: "Chinese (simplified)", EN: "English" })[lang] || lang;
+      return {
+        id: String(file.file_n_id || item.sd_id || item.id || ""),
+        url: downloadUrl,
+        display,
+        language: lang.toLowerCase(),
+        format: String(file.format || item.format || "zip").toLowerCase(),
+        encoding: null,
+        media: item.name || "",
+        source: "subdl",
+        release: file.release_name || item.release_name || item.name || "",
+        fileName: file.name || item.name || "",
+        isHearingImpaired: Boolean(file.hi ?? item.hi),
+        ai,
+        provider: "SubDL",
+        downloadCount: item.downloads ?? null,
+        production_type: productionType,
+        season: file.season ?? item.season ?? null,
+        episode: file.episode ?? item.episode ?? null,
+      };
+    });
+  });
+  return { enabled: true, ok: true, subtitles: rows };
+}
+
+function subtitleDedupeKey(item) {
+  return [String(item.language || "").toLowerCase(), String(item.fileName || item.release || "").toLowerCase().replace(/[^a-z0-9]/g, ""), String(item.format || "").toLowerCase()].join("|");
+}
+
 function titleMatchesResponse(data) {
   return json({
     ok: true,
@@ -262,18 +317,54 @@ export default {
       }
 
       const params = allowedSearchParams(url.searchParams);
-      const result = await wyzieSearch(id, params, env);
-      if (result.response) return result.response;
+      const providerChoice = (url.searchParams.get("providers") || "all").toLowerCase();
+      if (!["all", "wyzie", "subdl"].includes(providerChoice)) {
+        return json({ ok: false, error: "InvalidProviders", message: "providers 只能是 all、wyzie 或 subdl。" }, 400);
+      }
 
+      const tasks = [];
+      if (providerChoice !== "subdl") tasks.push(["wyzie", wyzieSearch(id, params, env)]);
+      if (providerChoice !== "wyzie") tasks.push(["subdl", subdlSearch(id, params, env, resolved?.media_type || url.searchParams.get("type"))]);
+      const settled = await Promise.all(tasks.map(async ([name, promise]) => [name, await promise]));
+      const subtitles = [];
+      const providerStatus = {};
+      let wyzieHeaders = {};
+
+      for (const [name, result] of settled) {
+        if (name === "wyzie") {
+          if (result.response) {
+            providerStatus.wyzie = { ok: false, error: "UpstreamError", status: result.response.status };
+          } else {
+            const rows = Array.isArray(result.data) ? result.data : (result.data?.subtitles || []);
+            subtitles.push(...rows.map((item) => ({ ...item, provider: "Wyzie" })));
+            providerStatus.wyzie = { ok: true, count: rows.length };
+            wyzieHeaders = result.headers || {};
+          }
+        } else {
+          providerStatus.subdl = result.enabled
+            ? { ok: Boolean(result.ok), count: result.subtitles?.length || 0, error: result.error || null, status: result.status || null }
+            : { ok: false, enabled: false, reason: result.reason };
+          if (result.ok && result.subtitles) subtitles.push(...result.subtitles);
+        }
+      }
+
+      const unique = [];
+      const seen = new Set();
+      for (const item of subtitles) {
+        const key = subtitleDedupeKey(item);
+        if (!seen.has(key)) { seen.add(key); unique.push(item); }
+      }
+      const sorted = unique.sort((a, b) => subtitleLanguageRank(a) - subtitleLanguageRank(b));
       return json({
         ok: true,
         resolved,
         id,
         season: season ? Number(season) : null,
         episode: episode ? Number(episode) : null,
-        count: Array.isArray(result.data) ? result.data.length : (result.data?.subtitles?.length || 0),
-        subtitles: Array.isArray(result.data) ? result.data : (result.data?.subtitles || result.data),
-      }, 200, result.headers);
+        count: sorted.length,
+        providers: providerStatus,
+        subtitles: sorted,
+      }, 200, { ...wyzieHeaders, "Cache-Control": "no-store" });
     }
 
     if (path === "/api/download") {
