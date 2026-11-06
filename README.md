@@ -1,5 +1,7 @@
 # subtitle-api
 
+Current release: **5.3.0** (stable versioned v1 routes).
+
 Cloudflare Workers subtitle API using [Wyzie Subs](https://docs.wyzie.io/subs/intro) for subtitle aggregation and TMDB for title lookup. Upstream credentials stay server-side.
 
 ## Current API features
