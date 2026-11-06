@@ -2,7 +2,7 @@
 
 Cloudflare Workers subtitle API using [Wyzie Subs](https://docs.wyzie.io/subs/intro) for subtitle aggregation and TMDB for title lookup. Upstream credentials stay server-side.
 
-## Version 2 features
+## Current API features
 
 - Search subtitles by IMDb or TMDB ID
 - Search movies and TV shows by title (requires a free TMDB API key)
@@ -72,6 +72,29 @@ curl "https://YOUR-WORKER.workers.dev/api/search?id=tt0111161&language=zh" \
 ```
 
 Omit the Authorization header if you did not configure `API_ACCESS_KEY`.
+
+## Versioned API (recommended for new clients)
+
+New integrations should use the stable `/api/v1/*` routes. The original `/api/*` routes remain available for backward compatibility.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/api/v1/health` | Versioned health check |
+| `/api/v1/title-search?query=...` | Find a movie or TV show |
+| `/api/v1/search?id=...` | Search and aggregate subtitles from enabled providers |
+| `/api/v1/download?url=...` | Download a selected subtitle through the API |
+| `/api/v1/sources`, `/api/v1/languages`, `/api/v1/status`, `/api/v1/usage` | Provider information and usage |
+
+The versioned routes use the same query parameters, response structure, API key authentication, and provider behavior as their matching legacy routes. Search responses use a unified `subtitles[]` array with normalized fields such as `provider`, `language`, `format`, `category`, and `url`. Provider-specific metadata is retained where available.
+
+Example:
+
+```sh
+curl "https://YOUR-WORKER.workers.dev/api/v1/search?id=tt0111161&language=zh" \
+  -H "Authorization: Bearer YOUR_ACCESS_KEY"
+```
+
+This is a stable, provider-neutral REST interface. It is not yet a drop-in implementation of every media player's proprietary subtitle-provider protocol; player-specific adapters can be added without changing the core search and download routes.
 
 ## Notes
 
