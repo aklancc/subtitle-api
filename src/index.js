@@ -392,7 +392,8 @@ export default {
       if (provider === "subdl") {
         if (!env.SUBDL_API_KEY) return json({ ok: false, error: "MissingSubDLKey" }, 503);
         const downloadPath = url.searchParams.get("path") || "";
-        if (!/^\\/subtitle\\/[A-Za-z0-9_-]+\\/[A-Za-z0-9_-]+\\/?$/.test(downloadPath)) {
+        const pathParts = downloadPath.split("/");
+        if (pathParts.length !== 4 || pathParts[0] !== "" || pathParts[1] !== "subtitle" || !/^[A-Za-z0-9_-]+$/.test(pathParts[2]) || !/^[A-Za-z0-9_-]+$/.test(pathParts[3])) {
           return json({ ok: false, error: "InvalidSubDLPath" }, 400);
         }
         const target = new URL(downloadPath, "https://dl.subdl.com");
