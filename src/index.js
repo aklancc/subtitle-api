@@ -654,7 +654,10 @@ export default {
 
     // ASSRT-compatible API: keep the native /v1/* paths and response envelope.
     if (requestedPath === "/v1/user/quota") {
-      return assrtJson(0, { result: "succeed", action: "quota", quota: 20 });
+      return json({
+        status: 0,
+        user: { result: "succeed", action: "quota", quota: 20 },
+      }, 200, { "Cache-Control": "no-store" });
     }
 
     if (requestedPath === "/v1/sub/search") {
