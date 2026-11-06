@@ -523,7 +523,16 @@ export default {
     }
 
     if (!authorized(request, env)) {
-      return json({ ok: false, error: "Unauthorized", message: "请在 Authorization 请求头中提供有效的 Bearer Token。" }, 401);
+      return json({ ok: false, error: "Unauthorized", message: "API 密钥错误，请检查 API_ACCESS_KEY，并使用 Bearer Token 鉴权。" }, 401);
+    }
+
+    if (path === "/api/auth-check") {
+      return json({
+        ok: true,
+        authenticated: true,
+        authConfigured: Boolean(env.API_ACCESS_KEY),
+        message: env.API_ACCESS_KEY ? "API key authenticated." : "API key authentication is not enabled; no key is required.",
+      });
     }
 
     if (!env.WYZIE_API_KEY) {
