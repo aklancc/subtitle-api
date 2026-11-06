@@ -26,10 +26,11 @@ function authorized(request, env) {
 function subtitleLanguageRank(item) {
   const language = String(item.language || "").toLowerCase();
   const display = String(item.display || "").toLowerCase();
-  const combined = `${language} ${display}`;
+  const scriptHints = [item.fileName, item.filename, item.release, item.media, item.media_name].filter(Boolean).join(" ").toLowerCase();
+  const combined = language + " " + display + " " + scriptHints;
 
-  if (/zh[-_ ]?(cn|hans)|simplified|简体/.test(combined)) return 0;
-  if (/zh[-_ ]?(tw|hk|hant)|traditional|繁体/.test(combined)) return 1;
+  if (/zh[-_ ]?(cn|hans)|simplified|简体|(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk?(?:[._ -]|$)/i.test(combined)) return 0;
+  if (/zh[-_ ]?(tw|hk|hant)|traditional|繁体|(?:^|[._ -])cht(?:[._ -]|$)|big5/i.test(combined)) return 1;
   if (language === "zh" || combined.includes("chinese") || combined.includes("中文")) return 2;
   return 3;
 }
@@ -156,7 +157,7 @@ async function wyzieSearch(id, params, env) {
   };
 }
 
-async function subdlSearch(id, params, env, type) {
+async function subdlSearch(id, params, env, type, workerOrigin) {
   if (!env.SUBDL_API_KEY) return { enabled: false, reason: "MissingSecret" };
   const api = new URL("https://api.subdl.com/api/v1/subtitles");
   api.searchParams.set("api_key", env.SUBDL_API_KEY);
@@ -179,10 +180,24 @@ async function subdlSearch(id, params, env, type) {
     return files.map((file) => {
       const lang = String(file.language || item.language || "").toUpperCase();
       const rawUrl = file.url || item.url || "";
-      const downloadUrl = rawUrl.startsWith("http") ? rawUrl : rawUrl ? `https://dl.subdl.com${rawUrl}` : null;
+      let downloadUrl = null;
+      if (rawUrl) {
+        try {
+          const parsedDownload = new URL(rawUrl, "https://dl.subdl.com");
+          if (parsedDownload.protocol === "https:" && parsedDownload.hostname === "dl.subdl.com" && parsedDownload.pathname.startsWith("/subtitle/")) {
+            const proxy = new URL("/api/download", workerOrigin);
+            proxy.searchParams.set("provider", "subdl");
+            proxy.searchParams.set("path", parsedDownload.pathname);
+            downloadUrl = proxy.toString();
+          }
+        } catch {}
+      }
       const productionType = Number(item.production_type ?? file.production_type ?? 0);
       const ai = productionType === 1 || productionType === 3 || /machine|ai|translated/i.test(String(item.production_type_name || ""));
-      const display = ({ ZH: "Chinese", ZHT: "Chinese (traditional)", ZHC: "Chinese (simplified)", EN: "English" })[lang] || lang;
+      let display = ({ ZH: "Chinese", ZHT: "Chinese (traditional)", ZHC: "Chinese (simplified)", EN: "English" })[lang] || lang;
+      const fileHints = [file.name, file.release_name, item.name, item.release_name].filter(Boolean).join(" ").toLowerCase();
+      if (lang === "ZH" && /(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk?(?:[._ -]|$)|simplified|hans|简体/i.test(fileHints)) display = "Chinese (simplified)";
+      else if (lang === "ZH" && /(?:^|[._ -])cht(?:[._ -]|$)|big5|traditional|hant|繁体/i.test(fileHints)) display = "Chinese (traditional)";
       return {
         id: String(file.file_n_id || item.sd_id || item.id || ""),
         url: downloadUrl,
@@ -324,7 +339,7 @@ export default {
 
       const tasks = [];
       if (providerChoice !== "subdl") tasks.push(["wyzie", wyzieSearch(id, params, env)]);
-      if (providerChoice !== "wyzie") tasks.push(["subdl", subdlSearch(id, params, env, resolved?.media_type || url.searchParams.get("type"))]);
+      if (providerChoice !== "wyzie") tasks.push(["subdl", subdlSearch(id, params, env, resolved?.media_type || url.searchParams.get("type"), url.origin)]);
       const settled = await Promise.all(tasks.map(async ([name, promise]) => [name, await promise]));
       const subtitles = [];
       const providerStatus = {};
@@ -373,6 +388,24 @@ export default {
     }
 
     if (path === "/api/download") {
+      const provider = (url.searchParams.get("provider") || "").toLowerCase();
+      if (provider === "subdl") {
+        if (!env.SUBDL_API_KEY) return json({ ok: false, error: "MissingSubDLKey" }, 503);
+        const downloadPath = url.searchParams.get("path") || "";
+        if (!/^\\/subtitle\\/[A-Za-z0-9_-]+\\/[A-Za-z0-9_-]+\\/?$/.test(downloadPath)) {
+          return json({ ok: false, error: "InvalidSubDLPath" }, 400);
+        }
+        const target = new URL(downloadPath, "https://dl.subdl.com");
+        target.searchParams.set("api_key", env.SUBDL_API_KEY);
+        const response = await fetch(target.toString());
+        const headers = new Headers(corsHeaders);
+        headers.set("Cache-Control", "no-store");
+        headers.set("Content-Type", response.headers.get("Content-Type") || "application/octet-stream");
+        headers.set("Content-Disposition", response.headers.get("Content-Disposition") || 'attachment; filename="subtitle"');
+        headers.set("X-Content-Type-Options", "nosniff");
+        return new Response(response.body, { status: response.status, headers });
+      }
+
       const subtitleUrl = url.searchParams.get("url");
 
       if (subtitleUrl) {
@@ -385,12 +418,18 @@ export default {
         if (parsed.protocol !== "https:" || !["sub.wyzie.io", "dl.subdl.com"].includes(parsed.hostname)) {
           return json({ ok: false, error: "URLNotAllowed", message: "下载地址只允许使用受支持字幕源的官方域名。" }, 400);
         }
+        if (parsed.hostname === "dl.subdl.com") {
+          if (!env.SUBDL_API_KEY) return json({ ok: false, error: "MissingSubDLKey" }, 503);
+          parsed.searchParams.delete("api_key");
+          parsed.searchParams.set("api_key", env.SUBDL_API_KEY);
+        }
 
         const response = await fetch(parsed.toString());
         const headers = new Headers(corsHeaders);
         headers.set("Cache-Control", "no-store");
         headers.set("Content-Type", response.headers.get("Content-Type") || "application/octet-stream");
         headers.set("Content-Disposition", response.headers.get("Content-Disposition") || 'attachment; filename="subtitle"');
+        headers.set("X-Content-Type-Options", "nosniff");
         return new Response(response.body, { status: response.status, headers });
       }
 
