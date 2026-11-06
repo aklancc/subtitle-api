@@ -228,8 +228,64 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
   return { enabled: true, ok: true, subtitles: filteredRows };
 }
 
+function subtitleCategory(item) {
+  const rank = subtitleLanguageRank(item);
+  if (rank === 0) return "zh-Hans";
+  if (rank === 1) return "zh-Hant";
+  if (rank === 2) return "zh-other";
+  return "other";
+}
+
 function subtitleDedupeKey(item) {
-  return [String(item.language || "").toLowerCase(), String(item.fileName || item.release || "").toLowerCase().replace(/[^a-z0-9]/g, ""), String(item.format || "").toLowerCase()].join("|");
+  const language = String(item.language || "").toLowerCase();
+  const format = String(item.format || "").toLowerCase();
+  if (item.ai || !String(item.fileName || item.release || "").trim()) {
+    return [item.provider || item.source || "", item.id || "", language, format].join("|").toLowerCase();
+  }
+  const name = String(item.fileName || item.release).toLowerCase().replace(/[^a-z0-9]/g, "");
+  return [language, name, format].join("|");
+}
+
+function subtitleStats(items) {
+  const stats = {
+    total: items.length,
+    simplified: 0,
+    traditional: 0,
+    chineseOther: 0,
+    otherLanguages: 0,
+    ai: 0,
+    original: 0,
+    providers: {},
+  };
+  for (const item of items) {
+    const category = subtitleCategory(item);
+    if (category === "zh-Hans") stats.simplified++;
+    else if (category === "zh-Hant") stats.traditional++;
+    else if (category === "zh-other") stats.chineseOther++;
+    else stats.otherLanguages++;
+    if (item.ai) stats.ai++;
+    else stats.original++;
+    const provider = item.provider || item.source || "unknown";
+    stats.providers[provider] = (stats.providers[provider] || 0) + 1;
+  }
+  return stats;
+}
+
+function sortSubtitles(items, sort) {
+  const rows = [...items];
+  if (sort === "popular") {
+    return rows.sort((a, b) => (Number(b.downloadCount) || 0) - (Number(a.downloadCount) || 0) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
+  }
+  if (sort === "provider") {
+    return rows.sort((a, b) => String(a.provider || "").localeCompare(String(b.provider || "")) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
+  }
+  if (sort === "format") {
+    return rows.sort((a, b) => String(a.format || "").localeCompare(String(b.format || "")) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
+  }
+  if (sort === "ai") {
+    return rows.sort((a, b) => Number(Boolean(b.ai)) - Number(Boolean(a.ai)) || subtitleLanguageRank(a) - subtitleLanguageRank(b));
+  }
+  return rows.sort((a, b) => subtitleLanguageRank(a) - subtitleLanguageRank(b) || Number(Boolean(a.ai)) - Number(Boolean(b.ai)) || (Number(b.downloadCount) || 0) - (Number(a.downloadCount) || 0));
 }
 
 function titleMatchesResponse(data) {
@@ -255,8 +311,8 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "3.1.0",
-        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection"],
+        version: "4.0.0",
+        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort"],
       });
     }
 
@@ -373,14 +429,34 @@ export default {
       const seen = new Set();
       for (const item of subtitles) {
         const key = subtitleDedupeKey(item);
-        if (!seen.has(key)) { seen.add(key); unique.push(item); }
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push({ ...item, category: subtitleCategory(item) });
+        }
       }
+
+      const requestedLanguage = (url.searchParams.get("language") || "").toLowerCase();
+      let filtered = unique;
+      if (requestedLanguage === "zh" || requestedLanguage === "zh-cn" || requestedLanguage === "zh-hans") {
+        filtered = filtered.filter((item) => ["zh-Hans", "zh-Hant", "zh-other"].includes(item.category));
+      } else if (requestedLanguage === "zh-tw" || requestedLanguage === "zh-hk" || requestedLanguage === "zh-hant") {
+        filtered = filtered.filter((item) => item.category === "zh-Hant");
+      } else if (requestedLanguage) {
+        filtered = filtered.filter((item) => String(item.language || "").toLowerCase() === requestedLanguage);
+      }
+
       const aiFilter = (url.searchParams.get("ai") || "all").toLowerCase();
       if (!["all", "true", "false"].includes(aiFilter)) {
-        return json({ ok: false, error: "InvalidAIFilter", message: "ai 只能是 all、true 或 false。" }, 400);
+        return json({ ok: false, error: "InvalidAIFilter", message: "ai 只能是 all、true 或 false。"}, 400);
       }
-      const filtered = aiFilter === "all" ? unique : unique.filter((item) => Boolean(item.ai) === (aiFilter === "true"));
-      const sorted = filtered.sort((a, b) => subtitleLanguageRank(a) - subtitleLanguageRank(b));
+      if (aiFilter !== "all") filtered = filtered.filter((item) => Boolean(item.ai) === (aiFilter === "true"));
+
+      const sort = (url.searchParams.get("sort") || "chinese").toLowerCase();
+      if (!["chinese", "popular", "provider", "format", "ai"].includes(sort)) {
+        return json({ ok: false, error: "InvalidSort", message: "sort 只能是 chinese、popular、provider、format 或 ai。" }, 400);
+      }
+      const stats = subtitleStats(filtered);
+      const sorted = sortSubtitles(filtered, sort);
       return json({
         ok: true,
         resolved,
@@ -388,6 +464,8 @@ export default {
         season: season ? Number(season) : null,
         episode: episode ? Number(episode) : null,
         count: sorted.length,
+        stats,
+        filters: { language: requestedLanguage || "all", ai: aiFilter, sort },
         providers: providerStatus,
         subtitles: sorted,
       }, 200, { ...wyzieHeaders, "Cache-Control": "no-store" });
