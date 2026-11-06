@@ -1,0 +1,6 @@
+name = "subtitle-api"
+main = "src/index.js"
+compatibility_date = "2026-11-06"
+
+[observability]
+enabled = true
