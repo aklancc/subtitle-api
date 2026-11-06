@@ -514,8 +514,8 @@ function assrtId() {
 }
 
 async function assrtSearch(q, params, env, origin) {
-  const episodeMatch = q.match(/\\bS(\\d{1,2})\\s*E(\\d{1,3})\\b/i);
-  const cleanQuery = q.replace(/\\.[a-z0-9]{2,4}$/i, "").replace(/[._]+/g, " ").replace(/\\bS\\d{1,2}\\s*E\\d{1,3}\\b/i, " ").replace(/\\b(2160p|1080p|720p|480p|WEB[- .]?DL|BluRay|HDR|HEVC|x264|x265)\\b/ig, " ").replace(/\\s+/g, " ").trim();
+  const episodeMatch = q.match(/\bS(\d{1,2})\s*E(\d{1,3})\b/i);
+  const cleanQuery = q.replace(/\.[a-z0-9]{2,4}$/i, "").replace(/[._]+/g, " ").replace(/\bS\d{1,2}\s*E\d{1,3}\b/i, " ").replace(/\b(2160p|1080p|720p|480p|WEB[- .]?DL|BluRay|HDR|HEVC|x264|x265)\b/ig, " ").replace(/\s+/g, " ").trim();
   const found = await tmdbSearch(cleanQuery || q, "multi", null, env);
   if (found.error) return { error: found.error, status: found.status || 502 };
   const candidate = (found.results || []).find((item) => item.media_type === "movie" || item.media_type === "tv");
@@ -697,7 +697,7 @@ export default {
 
     if (requestedPath === "/v1/sub/detail") {
       const id = (url.searchParams.get("id") || "").trim();
-      if (!/^\\d{1,10}$/.test(id)) return assrtJson(20900, { result: "failed", action: "detail", error: "invalid subtitle id" }, 400);
+      if (!/^\d{1,10}$/.test(id)) return assrtJson(20900, { result: "failed", action: "detail", error: "invalid subtitle id" }, 400);
       const record = await assrtCacheGet(id);
       if (!record) return assrtJson(20900, { result: "failed", action: "detail", error: "subtitle result expired; search again" }, 404);
       const downloadUrl = new URL("/v1/sub/download", url.origin);
@@ -731,7 +731,7 @@ export default {
 
     if (requestedPath === "/v1/sub/download") {
       const id = (url.searchParams.get("id") || "").trim();
-      const record = /^\\d{1,10}$/.test(id) ? await assrtCacheGet(id) : null;
+      const record = /^\d{1,10}$/.test(id) ? await assrtCacheGet(id) : null;
       if (!record) return assrtJson(20900, { result: "failed", action: "download", error: "subtitle result expired; search again" }, 404);
       return assrtDownloadResponse(record, env);
     }
