@@ -1,6 +1,6 @@
 # subtitle-api
 
-Current release: **5.3.0** (stable versioned v1 routes).
+Current release: **5.6.0** (ASSRT-compatible API plus the versioned aggregation API).
 
 Cloudflare Workers subtitle API using [Wyzie Subs](https://docs.wyzie.io/subs/intro) for subtitle aggregation and TMDB for title lookup. Upstream credentials stay server-side.
 
@@ -97,6 +97,23 @@ curl "https://YOUR-WORKER.workers.dev/api/v1/search?id=tt0111161&language=zh" \
 ```
 
 This is a stable, provider-neutral REST interface. It is not yet a drop-in implementation of every media player's proprietary subtitle-provider protocol; player-specific adapters can be added without changing the core search and download routes.
+
+## ASSRT-compatible API
+
+The Worker also exposes ASSRT-style routes at the root-level `/v1/*` paths. This is separate from the provider-neutral `/api/v1/*` API.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/v1/sub/search?q=movie%20name&token=YOUR_TOKEN` | Search aggregated subtitles |
+| `/v1/sub/detail?id=SUBTITLE_ID&token=YOUR_TOKEN` | Get subtitle details and a download URL |
+| `/v1/sub/download?id=SUBTITLE_ID&token=YOUR_TOKEN` | Stream the selected subtitle |
+| `/v1/user/quota?token=YOUR_TOKEN` | ASSRT-style connection check |
+
+Use the Worker origin (for example, `https://YOUR-WORKER.workers.dev`) as the ASSRT API server address. If `API_ACCESS_KEY` is configured, use that same value as the ASSRT Token. ASSRT-style clients send the token as a query parameter; the standard `/api/*` endpoints continue to use Bearer authentication.
+
+The adapter searches TMDB by the supplied title, then aggregates Wyzie and SubDL results and maps them into the ASSRT response envelope (`status`, `sub`, and `subs`). It supports the common `q`, `pos`, and `cnt` parameters. For episode-style queries such as `Show.Name.S01E02`, it attempts to extract the season and episode.
+
+ASSRT uses numeric subtitle IDs followed by a separate detail request. The adapter temporarily stores the search-result mapping in the Cloudflare edge cache for about one hour. If a detail/download request says the result expired, search for the title again. This is a compatibility adapter, not an official ASSRT service; metadata such as votes, upload dates, and archive file lists may be unavailable. The quota endpoint is a compatibility response, not a real usage meter or rate-limit guarantee.
 
 ## Notes
 
