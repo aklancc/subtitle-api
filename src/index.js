@@ -233,9 +233,9 @@ export default {
       return json({
         ok: true,
         service: "subtitle-api",
-        provider: "Wyzie Subs",
-        version: "2.0.0",
-        features: ["title-search", "movie-subtitles", "tv-episode-subtitles", "chinese-first", "subtitle-download"],
+        provider: ["Wyzie", "SubDL"],
+        version: "3.0.0",
+        features: ["title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download"],
       });
     }
 
@@ -377,8 +377,8 @@ export default {
         } catch {
           return json({ ok: false, error: "InvalidUrl" }, 400);
         }
-        if (parsed.protocol !== "https:" || parsed.hostname !== "sub.wyzie.io") {
-          return json({ ok: false, error: "URLNotAllowed", message: "下载地址只允许使用 https://sub.wyzie.io 域名。" }, 400);
+        if (parsed.protocol !== "https:" || !["sub.wyzie.io", "dl.subdl.com"].includes(parsed.hostname)) {
+          return json({ ok: false, error: "URLNotAllowed", message: "下载地址只允许使用受支持字幕源的官方域名。" }, 400);
         }
 
         const response = await fetch(parsed.toString());
@@ -426,7 +426,7 @@ export default {
     return json({
       ok: false,
       error: "NotFound",
-      version: "2.0.0",
+      version: "3.0.0",
       endpoints: [
         "/health",
         "/api/title-search?query=肖申克的救赎&type=movie",
