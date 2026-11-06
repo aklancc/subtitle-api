@@ -393,6 +393,62 @@ function subtitleStats(items) {
   return stats;
 }
 
+function normalizeLanguageCode(item) {
+  const lang = String(item.language || "").toLowerCase();
+  const category = item.category || subtitleCategory(item);
+  if (category === "zh-Hans") return "zh-Hans";
+  if (category === "zh-Hant") return "zh-Hant";
+  if (category === "zh-bilingual" || category === "zh-other") return "zh";
+  if (lang === "zhc") return "zh-Hans";
+  if (lang === "zht") return "zh-Hant";
+  return lang || "und";
+}
+
+function normalizeV1Subtitle(item, origin) {
+  let downloadUrl = null;
+  if (item.url) {
+    try {
+      const sourceUrl = new URL(item.url);
+      const proxy = new URL("/api/v1/download", origin);
+      if (sourceUrl.origin === origin && sourceUrl.pathname.endsWith("/api/download")) {
+        const provider = sourceUrl.searchParams.get("provider");
+        const path = sourceUrl.searchParams.get("path");
+        if (provider === "subdl" && path) {
+          proxy.searchParams.set("provider", "subdl");
+          proxy.searchParams.set("path", path);
+          downloadUrl = proxy.toString();
+        }
+      } else if (sourceUrl.protocol === "https:" && sourceUrl.hostname === "sub.wyzie.io") {
+        proxy.searchParams.set("url", sourceUrl.toString());
+        downloadUrl = proxy.toString();
+      } else if (sourceUrl.protocol === "https:" && sourceUrl.hostname === "dl.subdl.com") {
+        proxy.searchParams.set("url", sourceUrl.toString());
+        downloadUrl = proxy.toString();
+      }
+    } catch {}
+  }
+  const languageCode = normalizeLanguageCode(item);
+  return {
+    id: String(item.id || ""),
+    provider: item.provider || (item.source === "subdl" ? "SubDL" : "Wyzie"),
+    languageCode,
+    languageName: item.display || item.language || "Unknown",
+    format: String(item.format || "").toLowerCase() || null,
+    encoding: item.encoding || null,
+    fileName: item.fileName || item.filename || null,
+    release: item.release || null,
+    mediaTitle: item.media || item.media_name || null,
+    downloadUrl,
+    category: item.category || subtitleCategory(item),
+    isAi: Boolean(item.ai),
+    hearingImpaired: Boolean(item.isHearingImpaired),
+    downloadCount: item.downloadCount ?? null,
+    season: item.season ?? null,
+    episode: item.episode ?? null
+  };
+}
+
+
 function sortSubtitles(items, sort) {
   const rows = [...items];
   // Always put every Chinese subtitle category before non-Chinese results.
@@ -437,6 +493,7 @@ export default {
     const url = new URL(request.url);
     // Stable, versioned aliases. Keep the original /api/* routes working for existing clients.
     const requestedPath = url.pathname;
+    const isV1 = requestedPath.startsWith("/api/v1/");
     const path = requestedPath === "/api/v1/health"
       ? "/health"
       : requestedPath.startsWith("/api/v1/")
@@ -448,9 +505,9 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "5.3.0",
+        version: "5.4.0",
         apiVersion: "v1",
-        features: ["versioned-v1-routes", "title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts"],
+        features: ["versioned-v1-routes", "normalized-v1-response", "versioned-download-proxy", "title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts"],
       });
     }
 
@@ -485,6 +542,24 @@ export default {
         }, 503);
       }
       if (data.error) return json({ ok: false, ...data }, data.status || 502);
+      if (isV1) {
+        return json({
+          apiVersion: "v1",
+          ok: true,
+          count: data.results.length,
+          results: data.results.map((item) => ({
+            id: String(item.tmdb_id),
+            tmdbId: item.tmdb_id,
+            mediaType: item.media_type,
+            title: item.title,
+            originalTitle: item.original_title,
+            year: item.year,
+            releaseDate: item.release_date,
+            overview: item.overview,
+            posterPath: item.poster_path
+          }))
+        }, 200, { "Cache-Control": "public, max-age=300" });
+      }
       return titleMatchesResponse(data);
     }
 
@@ -611,6 +686,30 @@ export default {
       }
       const stats = subtitleStats(filtered);
       const sorted = sortSubtitles(filtered, sort);
+      if (isV1) {
+        return json({
+          apiVersion: "v1",
+          ok: true,
+          media: resolved ? {
+            id: String(resolved.tmdb_id),
+            tmdbId: resolved.tmdb_id,
+            mediaType: resolved.media_type,
+            title: resolved.title,
+            originalTitle: resolved.original_title,
+            year: resolved.year
+          } : { id: String(id), tmdbId: /^\\d+$/.test(String(id)) ? Number(id) : null, mediaType: url.searchParams.get("type") || null },
+          query: {
+            id: String(id),
+            season: season ? Number(season) : null,
+            episode: episode ? Number(episode) : null
+          },
+          count: sorted.length,
+          stats,
+          filters: { language: requestedLanguage || "all", category: requestedCategory || "all", ai: aiFilter, sort },
+          providers: providerStatus,
+          results: sorted.map((item) => normalizeV1Subtitle(item, url.origin))
+        }, 200, { ...wyzieHeaders, "Cache-Control": "no-store" });
+      }
       return json({
         ok: true,
         resolved,
@@ -709,7 +808,7 @@ export default {
     return json({
       ok: false,
       error: "NotFound",
-      version: "5.3.0",
+      version: "5.4.0",
       apiVersion: "v1",
       endpoints: [
         "/health",
