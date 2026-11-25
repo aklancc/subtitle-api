@@ -34,8 +34,35 @@ function authorized(request, env) {
 }
 
 function subtitleFileHints(item) {
-  return [item.fileName, item.filename, item.release, item.name, item.release_name]
-    .filter(Boolean).join(" ").toLowerCase();
+  return [
+    item.fileName, item.filename, item.file_name, item.file,
+    item.release, item.name, item.release_name, item.releaseName,
+    item.title, item.path
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function subtitleLanguageValue(item) {
+  const values = [
+    item.language, item.lang, item.languageCode, item.language_code,
+    item.lang_code, item.display, item.languageName, item.language_name
+  ];
+  return values.filter(Boolean).map((value) => String(value)).join(" ").trim().toLowerCase();
+}
+
+function normalizeAssrtCandidate(item, provider) {
+  const fileName = item.fileName || item.filename || item.file_name || item.file ||
+    item.release || item.release_name || item.releaseName || item.name || "";
+  const language = item.language || item.lang || item.languageCode ||
+    item.language_code || item.lang_code || "";
+  const url = item.url || item.downloadUrl || item.download_url || item.link || "";
+  return {
+    ...item,
+    provider,
+    language: String(language || ""),
+    display: item.display || item.languageName || item.language_name || String(language || ""),
+    fileName: String(fileName || ""),
+    url: String(url || "")
+  };
 }
 
 function subtitleIsBilingual(item) {
@@ -47,14 +74,13 @@ function subtitleIsBilingual(item) {
 }
 
 function isChineseSubtitle(item) {
-  // Filename-level bilingual markers override provider language metadata.
+  // Prefer explicit provider language metadata; fall back to release/file tags.
   if (subtitleIsBilingual(item)) return true;
-  const language = String(item.language || "").trim().toLowerCase();
-  const display = String(item.display || "").trim().toLowerCase();
-  if (/^(?:zh|zhc|zht|chi|zho)(?:[-_].*)?$/.test(language)) return true;
-  if (/^(?:chinese|中文|简体|繁体)/.test(language) || /chinese|中文|简体|繁体/.test(display)) return true;
+  const language = subtitleLanguageValue(item);
+  if (/(?:^|[\\s,;([_-])(?:zh|zhc|zht|chi|zho)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?(?:$|[\\s,;)[_-])/.test(language)) return true;
+  if (/chinese|中文|简体|繁体/.test(language)) return true;
   const hints = subtitleFileHints(item);
-  return /(?:^|[\s.[\]()_-])(?:zh(?:[-_ ]?(?:cn|tw|hk|hans|hant))?|chs|cht|zhc|zht|chinese|简体|繁体)(?:$|[\s.[\]()_-])/i.test(hints);
+  return /(?:^|[\\s.[\\]()_-])(?:zh(?:[-_ ]?(?:cn|tw|hk|hans|hant))?|chs|cht|zhc|zht|chinese|简体|繁体)(?:$|[\\s.[\\]()_-])/i.test(hints);
 }
 
 async function unzipSubtitleText(buffer) {
@@ -624,17 +650,19 @@ async function assrtSearch(q, params, env, origin) {
   const rows = [];
   for (const [name, result] of settled) {
     if (name === "wyzie" && !result.response) {
-      const list = Array.isArray(result.data) ? result.data : (result.data?.subtitles || []);
-      rows.push(...list.map((item) => ({ ...item, provider: "Wyzie" })));
+      const list = Array.isArray(result.data) ? result.data : (result.data?.subtitles || result.data?.results || []);
+      rows.push(...list.map((item) => normalizeAssrtCandidate(item, "Wyzie")));
     } else if (name === "subdl" && result.ok && result.subtitles) {
-      rows.push(...result.subtitles);
+      rows.push(...result.subtitles.map((item) => normalizeAssrtCandidate(item, "SubDL")));
     }
   }
   const unique = [];
   const seen = new Set();
   for (const item of rows) {
-    // Require a concrete file name, a provider URL, and Chinese language tags.
-    if (!item.url || !String(item.fileName || item.filename || "").trim()) continue;
+    // Require a real provider download URL and a Chinese language/release signal.
+    // Some providers omit a separate filename field; the release/title can still
+    // identify a downloadable subtitle and is retained as the displayed filename.
+    if (!item.url) continue;
     if (!isChineseSubtitle(item)) continue;
     const key = subtitleDedupeKey(item);
     if (!seen.has(key)) {
