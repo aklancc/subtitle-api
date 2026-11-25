@@ -43,7 +43,7 @@ function subtitleIsBilingual(item) {
   const hints = [item.display, item.language, subtitleFileHints(item)].filter(Boolean).join(" ").toLowerCase();
   // Recognize common release tags: zh.eng, chs-eng, cht+eng, zh-cn.en,
   // Chinese-English, bilingual, and Chinese/English labels.
-  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|/]*english|english[-_. +&|/]*chinese|(?:^|[\s.[\]()_-])(?:zh|chs?|cht|zhc|zht)(?:[-_. ]?(?:cn|tw|hk|hans|hant))?[-_. +&|/]*(?:en|eng)(?:$|[\s.[\]()_-])|(?:^|[\s.[\]()_-])(?:en|eng)[-_. +&|/]*(?:zh|chs?|cht|zhc|zht)(?:$|[\s.[\]()_-])|简英|繁英/i.test(hints);
+  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|/]*english|english[-_. +&|/]*chinese|(?:^|[^a-z0-9])(?:zh|chs|cht|zhc|zht)(?:[-_. ]?(?:cn|tw|hk|hans|hant))?[-_. +&|/]+(?:en|eng)(?:$|[^a-z0-9])|(?:^|[^a-z0-9])(?:en|eng)[-_. +&|/]+(?:zh|chs|cht|zhc|zht)(?:$|[^a-z0-9])|简英|繁英/i.test(hints);
 }
 
 function isChineseSubtitle(item) {
