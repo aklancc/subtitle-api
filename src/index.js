@@ -513,9 +513,13 @@ async function assrtCacheGet(id) {
 }
 
 function assrtId() {
-  const value = new Uint32Array(1);
+  // Keep the numeric ASSRT-compatible ID, but use the full 10-digit space.
+  // The ID itself is the short-lived capability for Noctra clients that
+  // reconstruct /sub/download?id=... and omit both Authorization and ticket.
+  const value = new Uint32Array(2);
   crypto.getRandomValues(value);
-  return String((value[0] & 0x7fffffff) || 1);
+  const combined = (BigInt(value[0]) << 32n) | BigInt(value[1]);
+  return String((combined % 9000000000n) + 1000000000n);
 }
 
 // A 256-bit bearer ticket lets Noctra download without forwarding its
@@ -577,6 +581,10 @@ async function assrtSearch(q, params, env, origin) {
       unique.push({ ...item, category: subtitleCategory(item) });
     }
   }
+  // Inspect the leading Chinese-language candidates so genuine Chinese+
+  // English subtitle files outrank Chinese-only files in Noctra's ASSRT list.
+  await analyzeBilingualSubtitles(unique, env);
+  for (const item of unique) item.category = subtitleCategory(item);
   const sorted = sortSubtitles(unique, "chinese");
   return { rows: sorted, total: sorted.length, media: candidate };
 }
@@ -691,8 +699,12 @@ export default {
       const ticket = url.searchParams.get("ticket") || "";
       const ticketIsValid = Boolean(cachedRecord &&
         secureTokenMatches(cachedRecord.downloadTicket, ticket));
-      if (!requestIsAuthorized && !ticketIsValid) {
-        return json({ ok: false, error: "Unauthorized", message: "下载凭证无效或已过期，请重新搜索字幕。" }, 401);
+      // Noctra's observed download request contains only the numeric id:
+      // it drops Authorization and also ignores the ticket URL returned by
+      // /sub/detail. Accept a still-cached, high-entropy 10-digit result ID
+      // for this one download route; all search/detail/API routes stay gated.
+      if (!cachedRecord || (!requestIsAuthorized && !ticketIsValid && !/^\d{10}$/.test(downloadId))) {
+        return json({ ok: false, error: "Unauthorized", message: "字幕下载凭证无效或已过期，请重新搜索字幕。" }, 401);
       }
       assrtDownloadRecord = cachedRecord;
     } else if (!requestIsAuthorized) {
