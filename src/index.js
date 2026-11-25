@@ -77,7 +77,7 @@ function isChineseSubtitle(item) {
   // Prefer explicit provider language metadata; fall back to release/file tags.
   if (subtitleIsBilingual(item)) return true;
   const language = subtitleLanguageValue(item);
-  if (/(?:^|[\\s,;([_-])(?:zh|zhc|zht|chi|zho)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?(?:$|[\\s,;)[_-])/.test(language)) return true;
+  if (/(?:^|[^a-z0-9])(?:zh|zhc|zht|chi|zho)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?(?:$|[^a-z0-9])/i.test(language)) return true;
   if (/chinese|中文|简体|繁体/.test(language)) return true;
   const hints = subtitleFileHints(item);
   return /(?:^|[\\s.[\\]()_-])(?:zh(?:[-_ ]?(?:cn|tw|hk|hans|hant))?|chs|cht|zhc|zht|chinese|简体|繁体)(?:$|[\\s.[\\]()_-])/i.test(hints);
