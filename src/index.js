@@ -24,7 +24,7 @@ function authorized(request, env) {
   const authorization = (request.headers.get("Authorization") || "").trim();
   // Noctra's Token field may send the secret as a raw Authorization value,
   // while other clients use the conventional Bearer or Token scheme.
-  const suppliedToken = authorization.replace(/^(?:Bearer|Token)\\s+/i, "").trim();
+  const suppliedToken = authorization.replace(/^(?:Bearer|Token)\s+/i, "").trim();
   const authorizationMatch = suppliedToken === env.API_ACCESS_KEY;
   const nekofin = request.headers.get("x-nekofin-key") === env.API_ACCESS_KEY;
   if (authorizationMatch || nekofin) return true;
