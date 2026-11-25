@@ -670,13 +670,13 @@ async function assrtSearch(q, params, env, origin) {
       unique.push({ ...item, category: subtitleCategory(item) });
     }
   }
-  // Do not download and parse every provider file during search.
-  // Wyzie download URLs may be short-lived/provider-specific and ZIP files can
-  // use encodings or compression methods that Workers cannot inspect reliably.
-  // A concrete filename + provider download URL + Chinese language/release tag
-  // is enough to show the result; the actual file is fetched only when selected.
-  for (const item of unique) item.category = subtitleCategory(item);
-  const sorted = sortSubtitles(unique, "chinese");
+  // Verify the actual provider payload before showing a result in Noctra.
+  // This prevents metadata-only/empty entries from appearing in the picker.
+  // Candidates are fetched in small parallel batches and retained only when
+  // a real SRT/ASS/SSA/VTT subtitle with Chinese text is present.
+  const verified = await analyzeSubtitleFiles(unique, env);
+  for (const item of verified) item.category = subtitleCategory(item);
+  const sorted = sortSubtitles(verified, "chinese");
   return { rows: sorted, total: sorted.length, media: candidate };
 }
 
