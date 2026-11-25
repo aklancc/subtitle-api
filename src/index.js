@@ -125,6 +125,12 @@ function subtitleTextLooksBilingual(text) {
   return meaningful >= 8 && mixed >= 5 && mixed / meaningful >= 0.2;
 }
 
+function subtitleTextContainsChinese(text) {
+  const value = String(text || "");
+  const chineseCount = (value.match(/[\\u3400-\\u9fff]/g) || []).length;
+  return chineseCount >= 8;
+}
+
 function subtitleTextLooksUsable(text) {
   const value = String(text || "").replace(/\r/g, "").trim();
   if (value.length < 80) return false;
@@ -169,13 +175,13 @@ async function inspectSubtitleFile(item, env) {
     if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
       const unpacked = await unzipSubtitleText(buffer);
       text = unpacked.text;
-      valid = unpacked.hasSubtitleFile && subtitleTextLooksUsable(text);
+      valid = unpacked.hasSubtitleFile && subtitleTextLooksUsable(text) && subtitleTextContainsChinese(text);
     } else {
       text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
       if (text.includes("\uFFFD")) {
         try { text = new TextDecoder("gb18030", { fatal: false }).decode(buffer); } catch {}
       }
-      valid = subtitleTextLooksUsable(text);
+      valid = subtitleTextLooksUsable(text) && subtitleTextContainsChinese(text);
     }
     return { valid, bilingual: valid && subtitleTextLooksBilingual(text) };
   } catch {
