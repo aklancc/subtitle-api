@@ -21,9 +21,13 @@ function json(data, status = 200, extraHeaders = {}) {
 
 function authorized(request, env) {
   if (!env.API_ACCESS_KEY) return true;
-  const bearer = request.headers.get("Authorization") === `Bearer ${env.API_ACCESS_KEY}`;
+  const authorization = (request.headers.get("Authorization") || "").trim();
+  // Noctra's Token field may send the secret as a raw Authorization value,
+  // while other clients use the conventional Bearer or Token scheme.
+  const suppliedToken = authorization.replace(/^(?:Bearer|Token)\\s+/i, "").trim();
+  const authorizationMatch = suppliedToken === env.API_ACCESS_KEY;
   const nekofin = request.headers.get("x-nekofin-key") === env.API_ACCESS_KEY;
-  if (bearer || nekofin) return true;
+  if (authorizationMatch || nekofin) return true;
   const url = new URL(request.url);
   // ASSRT-compatible clients commonly send their token as a query parameter.
   return url.pathname.startsWith("/v1/") && url.searchParams.get("token") === env.API_ACCESS_KEY;
