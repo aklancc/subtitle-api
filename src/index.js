@@ -291,7 +291,7 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
   if (!env.SUBDL_API_KEY) return { enabled: false, reason: "MissingSecret" };
   const api = new URL("https://api.subdl.com/api/v1/subtitles");
   api.searchParams.set("api_key", env.SUBDL_API_KEY);
-  if (/^tt\\d+$/.test(id)) api.searchParams.set("imdb_id", id);
+  if (/^tt\d+$/.test(id)) api.searchParams.set("imdb_id", id);
   else api.searchParams.set("tmdb_id", id);
   if (type === "movie" || type === "tv") api.searchParams.set("type", type);
   if (params.get("season")) api.searchParams.set("season_number", params.get("season"));
@@ -921,7 +921,7 @@ export default {
             title: resolved.title,
             originalTitle: resolved.original_title,
             year: resolved.year
-          } : { id: String(id), tmdbId: /^\\d+$/.test(String(id)) ? Number(id) : null, mediaType: url.searchParams.get("type") || null },
+          } : { id: String(id), tmdbId: /^\d+$/.test(String(id)) ? Number(id) : null, mediaType: url.searchParams.get("type") || null },
           query: {
             id: String(id),
             season: season ? Number(season) : null,
