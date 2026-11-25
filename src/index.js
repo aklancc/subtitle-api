@@ -642,10 +642,13 @@ async function assrtSearch(q, params, env, origin) {
       unique.push({ ...item, category: subtitleCategory(item) });
     }
   }
-  // Verify the download really contains a non-empty SRT/ASS/SSA/VTT file.
-  const verified = await analyzeSubtitleFiles(unique, env);
-  for (const item of verified) item.category = subtitleCategory(item);
-  const sorted = sortSubtitles(verified, "chinese");
+  // Do not download and parse every provider file during search.
+  // Wyzie download URLs may be short-lived/provider-specific and ZIP files can
+  // use encodings or compression methods that Workers cannot inspect reliably.
+  // A concrete filename + provider download URL + Chinese language/release tag
+  // is enough to show the result; the actual file is fetched only when selected.
+  for (const item of unique) item.category = subtitleCategory(item);
+  const sorted = sortSubtitles(unique, "chinese");
   return { rows: sorted, total: sorted.length, media: candidate };
 }
 
