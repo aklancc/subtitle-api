@@ -41,7 +41,7 @@ function subtitleFileHints(item) {
 function subtitleIsBilingual(item) {
   if (item.bilingualContent === true) return true;
   const hints = [item.display, item.language, subtitleFileHints(item)].filter(Boolean).join(" ").toLowerCase();
-  return /中英双语|中英文双语|双语字幕|bilingual|chinese[._ -]*(?:\+|&|\/|\||-)[._ -]*english|english[._ -]*(?:\+|&|\/|\||-)[._ -]*chinese|(?:^|[\s.\[\]()_-])(?:zh|chs?|cht)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?[._ -]*(?:\+|&|\/|\||-)[._ -]*(?:en|eng)(?:[\s.\[\]()_-]|$)|(?:^|[\s.\[\]()_-])(?:en|eng)[._ -]*(?:\+|&|\/|\||-)[._ -]*(?:zh|chs?|cht)(?:[\s.\[\]()_-]|$)|zh[-_. ]?en|en[-_. ]?zh|简英|繁英/i.test(hints);
+  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|/]*english|english[-_. +&|/]*chinese|(?:^|[\\s.\\[\\]()_-])(?:zh|chs?|cht)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?[-_. +&|/]*(?:en|eng)(?:[\\s.\\[\\]()_-]|$)|(?:^|[\\s.\\[\\]()_-])(?:en|eng)[-_. +&|/]*(?:zh|chs?|cht)(?:[\\s.\\[\\]()_-]|$)|简英|繁英/i.test(hints);
 }
 
 function isChineseSubtitle(item) {
@@ -149,7 +149,7 @@ async function inspectSubtitleFile(item, env) {
     const response = await fetch(target.toString(), { headers: { "Accept": "*/*" } });
     if (!response.ok) return { valid: false, bilingual: false };
     const length = Number(response.headers.get("Content-Length") || 0);
-    if (length < 100 || length > 8 * 1024 * 1024) return { valid: false, bilingual: false };
+    if ((length && length < 100) || length > 8 * 1024 * 1024) return { valid: false, bilingual: false };
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength < 100 || buffer.byteLength > 8 * 1024 * 1024) return { valid: false, bilingual: false };
     const bytes = new Uint8Array(buffer);
@@ -345,10 +345,52 @@ async function subdlSearch(id, params, env, type, workerOrigin) {
   try { payload = JSON.parse(raw); } catch { return { enabled: true, ok: false, error: "InvalidJSON" }; }
   if (payload.status === false) return { enabled: true, ok: false, error: payload.error || "SubDL error" };
   const rows = (payload.subtitles || []).flatMap((item) => {
-    // Only use unpacked subtitle file records, never a parent archive/title
-    // record that merely has a display name but no actual file entry.
+    // Only unpacked file records are accepted. Parent archive records without
+    // a concrete subtitle file entry are omitted from the search results.
     const files = Array.isArray(item.unpack_files) ? item.unpack_files : [];
-    return files.filter((file) => file && (file.name || file.filename) && (file.url || item.url)).map((file) => {  return { enabled: true, ok: true, subtitles: rows };
+    return files.filter((file) => file && (file.name || file.filename) && (file.url || item.url)).map((file) => {
+      const lang = String(file.language || item.language || "").toUpperCase();
+      const rawUrl = file.url || item.url || "";
+      let downloadUrl = null;
+      if (rawUrl) {
+        try {
+          const parsedDownload = new URL(rawUrl, "https://dl.subdl.com");
+          if (parsedDownload.protocol === "https:" && parsedDownload.hostname === "dl.subdl.com" && parsedDownload.pathname.startsWith("/subtitle/")) {
+            const proxy = new URL("/api/download", workerOrigin);
+            proxy.searchParams.set("provider", "subdl");
+            proxy.searchParams.set("path", parsedDownload.pathname);
+            downloadUrl = proxy.toString();
+          }
+        } catch {}
+      }
+      const productionType = Number(item.production_type ?? file.production_type ?? 0);
+      const ai = productionType === 1 || productionType === 3 || /machine|ai|translated/i.test(String(item.production_type_name || ""));
+      let display = ({ ZH: "Chinese", ZHT: "Chinese (traditional)", ZHC: "Chinese (simplified)", EN: "English" })[lang] || lang;
+      const fileHints = [file.name, file.filename, file.release_name, item.name, item.release_name].filter(Boolean).join(" ").toLowerCase();
+      if (lang === "ZH" && /(?:^|[._ -])chs(?:[._ -]|$)|(?:^|[._ -])gbk(?:[._ -]|$)|simplified|hans|简体/i.test(fileHints)) display = "Chinese (simplified)";
+      else if (lang === "ZH" && /(?:^|[._ -])cht(?:[._ -]|$)|big5|traditional|hant|繁体/i.test(fileHints)) display = "Chinese (traditional)";
+      return {
+        id: String(file.file_n_id || item.sd_id || item.id || ""),
+        url: downloadUrl,
+        display,
+        language: lang.toLowerCase(),
+        format: String(file.format || item.format || "zip").toLowerCase(),
+        encoding: null,
+        media: item.name || "",
+        source: "subdl",
+        release: file.release_name || item.release_name || item.name || "",
+        fileName: file.name || file.filename || "",
+        isHearingImpaired: Boolean(file.hi ?? item.hi),
+        ai,
+        provider: "SubDL",
+        downloadCount: item.downloads ?? null,
+        production_type: productionType,
+        season: file.season ?? item.season ?? null,
+        episode: file.episode ?? item.episode ?? null,
+      };
+    });
+  });
+  return { enabled: true, ok: true, subtitles: rows };
 }
 
 function subtitleCategory(item) {
@@ -582,7 +624,7 @@ async function assrtSearch(q, params, env, origin) {
   const verified = await analyzeSubtitleFiles(unique, env);
   for (const item of verified) item.category = subtitleCategory(item);
   const sorted = sortSubtitles(verified, "chinese");
-  return { rows: sorted, total: sorted.length, media: candidate };  return { rows: sorted, total: sorted.length, media: candidate };
+  return { rows: sorted, total: sorted.length, media: candidate };
 }
 
 function assrtJson(status, sub, httpStatus = 200) {
