@@ -518,6 +518,24 @@ function assrtId() {
   return String((value[0] & 0x7fffffff) || 1);
 }
 
+// A 256-bit bearer ticket lets Noctra download without forwarding its
+// Authorization header. The ticket lives only as long as the cached result.
+function assrtDownloadTicket() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function secureTokenMatches(expected, supplied) {
+  if (typeof expected !== "string" || typeof supplied !== "string" ||
+      expected.length !== 64 || supplied.length !== 64) return false;
+  let difference = 0;
+  for (let i = 0; i < expected.length; i++) {
+    difference |= expected.charCodeAt(i) ^ supplied.charCodeAt(i);
+  }
+  return difference === 0;
+}
+
 async function assrtSearch(q, params, env, origin) {
   const episodeMatch = q.match(/\bS(\d{1,2})\s*E(\d{1,3})\b/i);
   const cleanQuery = q.replace(/\.[a-z0-9]{2,4}$/i, "").replace(/[._]+/g, " ").replace(/\bS\d{1,2}\s*E\d{1,3}\b/i, " ").replace(/\b(2160p|1080p|720p|480p|WEB[- .]?DL|BluRay|HDR|HEVC|x264|x265)\b/ig, " ").replace(/\s+/g, " ").trim();
@@ -655,13 +673,29 @@ export default {
         ok: true,
         service: "subtitle-api",
         provider: ["Wyzie", "SubDL"],
-        version: "5.6.0",
+        version: "5.7.0",
         apiVersion: "v1",
-        features: ["versioned-v1-routes", "normalized-v1-response", "versioned-download-proxy", "title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts", "assrt-compatible-api", "assrt-token-query-auth", "assrt-detail-cache"],
+        features: ["versioned-v1-routes", "normalized-v1-response", "versioned-download-proxy", "title-search", "multi-provider-search", "wyzie", "subdl-optional", "subtitle-deduplication", "chinese-first", "ai-subtitle-flag", "subtitle-download", "subdl-download-proxy", "chinese-script-detection", "subtitle-categories", "subtitle-stats", "ai-filter", "multi-sort", "bilingual-first", "bilingual-category-filter", "subtitle-content-bilingual-detection", "chinese-first-across-all-sorts", "assrt-compatible-api", "assrt-token-query-auth", "assrt-detail-cache", "assrt-download-ticket-auth"],
       });
     }
 
-    if (!authorized(request, env)) {
+    // Noctra sends Authorization on search/detail, but omits it when fetching
+    // the returned download URL. Permit that one route only with a random,
+    // per-result ticket stored alongside the cached provider record.
+    const isAssrtDownload = ["/v1/sub/download", "/sub/download"].includes(requestedPath);
+    let assrtDownloadRecord = null;
+    const requestIsAuthorized = authorized(request, env);
+    if (isAssrtDownload) {
+      const downloadId = (url.searchParams.get("id") || "").trim();
+      const cachedRecord = /^\d{1,10}$/.test(downloadId) ? await assrtCacheGet(downloadId) : null;
+      const ticket = url.searchParams.get("ticket") || "";
+      const ticketIsValid = Boolean(cachedRecord &&
+        secureTokenMatches(cachedRecord.downloadTicket, ticket));
+      if (!requestIsAuthorized && !ticketIsValid) {
+        return json({ ok: false, error: "Unauthorized", message: "下载凭证无效或已过期，请重新搜索字幕。" }, 401);
+      }
+      assrtDownloadRecord = cachedRecord;
+    } else if (!requestIsAuthorized) {
       return json({ ok: false, error: "Unauthorized", message: "API 密钥错误，请检查 API_ACCESS_KEY，并使用 Bearer Token 鉴权。" }, 401);
     }
 
@@ -696,7 +730,14 @@ export default {
         let id = assrtId();
         // A short-lived edge cache bridges ASSRT's numeric-ID detail flow to provider download URLs.
         for (let attempt = 0; attempt < 3 && await assrtCacheGet(id); attempt++) id = assrtId();
-        await assrtCachePut(id, { provider: item.provider || "Wyzie", item, title: result.media?.title || q, query: q });
+        const downloadTicket = assrtDownloadTicket();
+        await assrtCachePut(id, {
+          provider: item.provider || "Wyzie",
+          item,
+          title: result.media?.title || q,
+          query: q,
+          downloadTicket,
+        });
         const detailUrl = new URL(requestedPath === "/v1/sub/search" ? "/v1/sub/download" : "/sub/download", url.origin);
         detailUrl.searchParams.set("id", id);
         const token = url.searchParams.get("token");
@@ -727,8 +768,7 @@ export default {
       if (!record) return assrtJson(20900, { result: "failed", action: "detail", error: "subtitle result expired; search again" }, 404);
       const downloadUrl = new URL(requestedPath === "/v1/sub/detail" ? "/v1/sub/download" : "/sub/download", url.origin);
       downloadUrl.searchParams.set("id", id);
-      const token = url.searchParams.get("token");
-      if (token) downloadUrl.searchParams.set("token", token);
+      if (record.downloadTicket) downloadUrl.searchParams.set("ticket", record.downloadTicket);
       const item = record.item || {};
       const lang = assrtLanguage(item);
       return assrtJson(0, {
@@ -755,8 +795,7 @@ export default {
     }
 
     if (["/v1/sub/download", "/sub/download"].includes(requestedPath)) {
-      const id = (url.searchParams.get("id") || "").trim();
-      const record = /^\d{1,10}$/.test(id) ? await assrtCacheGet(id) : null;
+      const record = assrtDownloadRecord;
       if (!record) return assrtJson(20900, { result: "failed", action: "download", error: "subtitle result expired; search again" }, 404);
       return assrtDownloadResponse(record, env);
     }
@@ -1054,7 +1093,7 @@ export default {
     return json({
       ok: false,
       error: "NotFound",
-      version: "5.6.0",
+      version: "5.7.0",
       apiVersion: "v1",
       endpoints: [
         "/health",
