@@ -987,7 +987,8 @@ export default {
       const requestedCategory = (url.searchParams.get("category") || "").toLowerCase();
       const bilingualMode = (url.searchParams.get("bilingual") || "").toLowerCase();
       if (requestedCategory === "bilingual" || requestedCategory === "zh-bilingual" || bilingualMode === "content") {
-        await analyzeBilingualSubtitles(unique, env);
+        const verifiedBilingualCandidates = await analyzeSubtitleFiles(unique, env);
+        unique.splice(0, unique.length, ...verifiedBilingualCandidates);
         for (const item of unique) item.category = subtitleCategory(item);
       }
       if (requestedCategory && !["bilingual", "zh-bilingual", "simplified", "zh-hans", "traditional", "zh-hant", "chinese", "other"].includes(requestedCategory)) {
