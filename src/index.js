@@ -41,7 +41,7 @@ function subtitleFileHints(item) {
 function subtitleIsBilingual(item) {
   if (item.bilingualContent === true) return true;
   const hints = [item.display, item.language, subtitleFileHints(item)].filter(Boolean).join(" ").toLowerCase();
-  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|/]*english|english[-_. +&|/]*chinese|(?:^|[\\s.\\[\\]()_-])(?:zh|chs?|cht)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?[-_. +&|/]*(?:en|eng)(?:[\\s.\\[\\]()_-]|$)|(?:^|[\\s.\\[\\]()_-])(?:en|eng)[-_. +&|/]*(?:zh|chs?|cht)(?:[\\s.\\[\\]()_-]|$)|简英|繁英/i.test(hints);
+  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|\/]*english|english[-_. +&|\/]*chinese|(?:^|[\\s.\\[\\]()_-])(?:zh|chs?|cht)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?[-_. +&|\/]*(?:en|eng)(?:[\\s.\\[\\]()_-]|$)|(?:^|[\\s.\\[\\]()_-])(?:en|eng)[-_. +&|\/]*(?:zh|chs?|cht)(?:[\\s.\\[\\]()_-]|$)|简英|繁英/i.test(hints);
 }
 
 function isChineseSubtitle(item) {
