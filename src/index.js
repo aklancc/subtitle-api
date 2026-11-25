@@ -41,17 +41,20 @@ function subtitleFileHints(item) {
 function subtitleIsBilingual(item) {
   if (item.bilingualContent === true) return true;
   const hints = [item.display, item.language, subtitleFileHints(item)].filter(Boolean).join(" ").toLowerCase();
-  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|\/]*english|english[-_. +&|\/]*chinese|(?:^|[\\s.\\[\\]()_-])(?:zh|chs?|cht)(?:[-_ ]?(?:cn|tw|hk|hans|hant))?[-_. +&|\/]*(?:en|eng)(?:[\\s.\\[\\]()_-]|$)|(?:^|[\\s.\\[\\]()_-])(?:en|eng)[-_. +&|\/]*(?:zh|chs?|cht)(?:[\\s.\\[\\]()_-]|$)|简英|繁英/i.test(hints);
+  // Recognize common release tags: zh.eng, chs-eng, cht+eng, zh-cn.en,
+  // Chinese-English, bilingual, and Chinese/English labels.
+  return /中英双语|中英文双语|双语字幕|bilingual|chinese[-_. +&|/]*english|english[-_. +&|/]*chinese|(?:^|[\s.[\]()_-])(?:zh|chs?|cht|zhc|zht)(?:[-_. ]?(?:cn|tw|hk|hans|hant))?[-_. +&|/]*(?:en|eng)(?:$|[\s.[\]()_-])|(?:^|[\s.[\]()_-])(?:en|eng)[-_. +&|/]*(?:zh|chs?|cht|zhc|zht)(?:$|[\s.[\]()_-])|简英|繁英/i.test(hints);
 }
 
 function isChineseSubtitle(item) {
+  // Filename-level bilingual markers override provider language metadata.
   if (subtitleIsBilingual(item)) return true;
   const language = String(item.language || "").trim().toLowerCase();
   const display = String(item.display || "").trim().toLowerCase();
-  const hints = subtitleFileHints(item);
   if (/^(?:zh|zhc|zht|chi|zho)(?:[-_].*)?$/.test(language)) return true;
   if (/^(?:chinese|中文|简体|繁体)/.test(language) || /chinese|中文|简体|繁体/.test(display)) return true;
-  return /(?:^|[\s.\[\]()_-])(?:zh(?:[-_ ]?(?:cn|tw|hk|hans|hant))?|chs|cht|zhc|zht|chinese|简体|繁体)(?:[\s.\[\]()_-]|$)/i.test(hints);
+  const hints = subtitleFileHints(item);
+  return /(?:^|[\s.[\]()_-])(?:zh(?:[-_ ]?(?:cn|tw|hk|hans|hant))?|chs|cht|zhc|zht|chinese|简体|繁体)(?:$|[\s.[\]()_-])/i.test(hints);
 }
 
 async function unzipSubtitleText(buffer) {
@@ -124,11 +127,19 @@ function subtitleTextLooksBilingual(text) {
 
 function subtitleTextLooksUsable(text) {
   const value = String(text || "").replace(/\r/g, "").trim();
-  if (value.length < 40) return false;
-  const hasAssEvents = /^\s*Dialogue:/mi.test(value);
-  const hasTimestamp = /\d{1,2}:\d{2}(?::\d{2})?[,.]\d{2,3}\s*-->/.test(value);
-  const hasSrtIndex = /^\s*\d+\s*$/m.test(value);
-  return hasAssEvents || (hasTimestamp && hasSrtIndex);
+  if (value.length < 80) return false;
+  const assLines = value.split("\n").filter((line) => /^\s*Dialogue:/i.test(line));
+  if (assLines.length >= 3) {
+    const body = assLines.map((line) => line.slice(line.indexOf(",", line.indexOf(",") + 1) + 1)
+      .replace(/\\N|\\n/g, " ").replace(/\{[^}]*\}/g, "")).join(" ");
+    return body.replace(/[^A-Za-z\u3400-\u9fff]/g, "").length >= 60;
+  }
+  const blocks = value.split(/\n\s*\n/).filter((block) => /\d{1,2}:\d{2}(?::\d{2})?[,.]\d{2,3}\s*-->/.test(block));
+  if (blocks.length < 3) return false;
+  const body = blocks.map((block) => block.split("\n")
+    .filter((line) => !/^\s*\d+\s*$/.test(line) && !/^\s*\d{1,2}:\d{2}/.test(line))
+    .join(" ")).join(" ").replace(/<[^>]*>/g, "");
+  return body.replace(/[^A-Za-z\u3400-\u9fff]/g, "").length >= 60;
 }
 
 async function inspectSubtitleFile(item, env) {
@@ -173,13 +184,17 @@ async function inspectSubtitleFile(item, env) {
 }
 
 async function analyzeSubtitleFiles(items, env) {
-  const candidates = items.filter((item) => isChineseSubtitle(item) && item.url && (item.fileName || item.filename || item.release));
+  // Only candidates with a concrete subtitle filename and a download URL are
+  // inspected. Every result we return has passed an actual file-content check.
+  const candidates = items.filter((item) =>
+    isChineseSubtitle(item) &&
+    item.url &&
+    String(item.fileName || item.filename || "").trim()
+  ).slice(0, 60);
   let cursor = 0;
-  let inspectedCount = 0;
-  const workers = Array.from({ length: Math.min(8, candidates.length) }, async () => {
-    while (cursor < candidates.length && inspectedCount < 45) {
+  const workers = Array.from({ length: Math.min(6, candidates.length) }, async () => {
+    while (cursor < candidates.length) {
       const item = candidates[cursor++];
-      inspectedCount++;
       const result = await inspectSubtitleFile(item, env);
       item.fileVerified = result.valid;
       item.bilingualContent = result.bilingual;
@@ -188,7 +203,7 @@ async function analyzeSubtitleFiles(items, env) {
     }
   });
   await Promise.all(workers);
-  return items.filter((item) => item.fileVerified === true);
+  return candidates.filter((item) => item.fileVerified === true);
 }
 
 function subtitleLanguageRank(item) {
@@ -613,7 +628,7 @@ async function assrtSearch(q, params, env, origin) {
   const seen = new Set();
   for (const item of rows) {
     // Require a concrete file name, a provider URL, and Chinese language tags.
-    if (!item.url || !(item.fileName || item.filename || item.release)) continue;
+    if (!item.url || !String(item.fileName || item.filename || "").trim()) continue;
     if (!isChineseSubtitle(item)) continue;
     const key = subtitleDedupeKey(item);
     if (!seen.has(key)) {
