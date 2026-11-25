@@ -5,7 +5,7 @@ const TMDB = "https://api.themoviedb.org/3";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-nekofin-key",
 };
 
 function json(data, status = 200, extraHeaders = {}) {
@@ -22,7 +22,8 @@ function json(data, status = 200, extraHeaders = {}) {
 function authorized(request, env) {
   if (!env.API_ACCESS_KEY) return true;
   const bearer = request.headers.get("Authorization") === `Bearer ${env.API_ACCESS_KEY}`;
-  if (bearer) return true;
+  const nekofin = request.headers.get("x-nekofin-key") === env.API_ACCESS_KEY;
+  if (bearer || nekofin) return true;
   const url = new URL(request.url);
   // ASSRT-compatible clients commonly send their token as a query parameter.
   return url.pathname.startsWith("/v1/") && url.searchParams.get("token") === env.API_ACCESS_KEY;
@@ -677,7 +678,7 @@ export default {
       }, 200, { "Cache-Control": "no-store" });
     }
 
-    if (requestedPath === "/v1/sub/search") {
+    if (["/v1/sub/search", "/sub/search", "/search"].includes(requestedPath)) {
       const q = (url.searchParams.get("q") || "").trim();
       if (q.length < 3) return assrtJson(101, { result: "failed", action: "search", error: "query too short" }, 400);
       if (!env.WYZIE_API_KEY) return assrtJson(50001, { result: "failed", action: "search", error: "subtitle provider is not configured" }, 503);
@@ -692,7 +693,7 @@ export default {
         // A short-lived edge cache bridges ASSRT's numeric-ID detail flow to provider download URLs.
         for (let attempt = 0; attempt < 3 && await assrtCacheGet(id); attempt++) id = assrtId();
         await assrtCachePut(id, { provider: item.provider || "Wyzie", item, title: result.media?.title || q, query: q });
-        const detailUrl = new URL("/v1/sub/download", url.origin);
+        const detailUrl = new URL(requestedPath === "/v1/sub/search" ? "/v1/sub/download" : "/sub/download", url.origin);
         detailUrl.searchParams.set("id", id);
         const token = url.searchParams.get("token");
         if (token) detailUrl.searchParams.set("token", token);
@@ -715,12 +716,12 @@ export default {
       return assrtJson(0, { subs, action: "search", keyword: q, result: "succeed", total: result.total, pos, cnt });
     }
 
-    if (requestedPath === "/v1/sub/detail") {
+    if (["/v1/sub/detail", "/sub/detail"].includes(requestedPath)) {
       const id = (url.searchParams.get("id") || "").trim();
       if (!/^\d{1,10}$/.test(id)) return assrtJson(20900, { result: "failed", action: "detail", error: "invalid subtitle id" }, 400);
       const record = await assrtCacheGet(id);
       if (!record) return assrtJson(20900, { result: "failed", action: "detail", error: "subtitle result expired; search again" }, 404);
-      const downloadUrl = new URL("/v1/sub/download", url.origin);
+      const downloadUrl = new URL(requestedPath === "/v1/sub/detail" ? "/v1/sub/download" : "/sub/download", url.origin);
       downloadUrl.searchParams.set("id", id);
       const token = url.searchParams.get("token");
       if (token) downloadUrl.searchParams.set("token", token);
@@ -749,7 +750,7 @@ export default {
       });
     }
 
-    if (requestedPath === "/v1/sub/download") {
+    if (["/v1/sub/download", "/sub/download"].includes(requestedPath)) {
       const id = (url.searchParams.get("id") || "").trim();
       const record = /^\d{1,10}$/.test(id) ? await assrtCacheGet(id) : null;
       if (!record) return assrtJson(20900, { result: "failed", action: "download", error: "subtitle result expired; search again" }, 404);
