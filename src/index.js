@@ -127,7 +127,7 @@ function subtitleTextLooksBilingual(text) {
 
 function subtitleTextContainsChinese(text) {
   const value = String(text || "");
-  const chineseCount = (value.match(/[\\u3400-\\u9fff]/g) || []).length;
+  const chineseCount = (value.match(/[\u3400-\u9fff]/g) || []).length;
   return chineseCount >= 8;
 }
 
