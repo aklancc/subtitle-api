@@ -50,7 +50,7 @@ function isChineseSubtitle(item) {
   const display = String(item.display || "").trim().toLowerCase();
   const hints = subtitleFileHints(item);
   if (/^(?:zh|zhc|zht|chi|zho)(?:[-_].*)?$/.test(language)) return true;
-  if (/chinese|中文|简体|繁体/.test(display)) return true;
+  if (/^(?:chinese|中文|简体|繁体)/.test(language) || /chinese|中文|简体|繁体/.test(display)) return true;
   return /(?:^|[\s.\[\]()_-])(?:zh(?:[-_ ]?(?:cn|tw|hk|hans|hant))?|chs|cht|zhc|zht|chinese|简体|繁体)(?:[\s.\[\]()_-]|$)/i.test(hints);
 }
 
@@ -524,13 +524,14 @@ function sortSubtitles(items, sort) {
 function assrtLanguage(item) {
   const code = normalizeLanguageCode(item).toLowerCase();
   const category = item.category || subtitleCategory(item);
-  const desc = item.display || item.language || "未知语言";
+  const bilingual = category === "zh-bilingual";
+  const desc = bilingual ? "中英双语" : (item.display || item.language || "未知语言");
   const langlist = {};
-  if (code.startsWith("zh") || category.startsWith("zh-")) langlist.langchi = true;
-  if (code === "en" || code.startsWith("en-")) langlist.langeng = true;
+  if (bilingual || code.startsWith("zh") || category.startsWith("zh-")) langlist.langchi = true;
+  if (bilingual || code === "en" || code.startsWith("en-")) langlist.langeng = true;
   if (code === "ja" || code.startsWith("ja-")) langlist.langjap = true;
   if (code === "ko" || code.startsWith("ko-")) langlist.langkor = true;
-  if (category === "zh-bilingual") langlist.langdou = true;
+  if (bilingual) langlist.langdou = true;
   return { desc, langlist };
 }
 
