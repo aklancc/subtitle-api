@@ -565,10 +565,12 @@ function assrtJson(status, sub, httpStatus = 200) {
 async function assrtDownloadResponse(record, env) {
   let target;
   try {
-    const sourceUrl = new URL(record.item.url);
-    if (record.provider === "SubDL" || sourceUrl.origin === "https://subtitle-api.alanchen123.workers.dev") {
-      const path = sourceUrl.searchParams.get("path");
-      if (!path || !path.startsWith("/subtitle/") || !env.SUBDL_API_KEY) {
+    const sourceUrl = new URL(record?.item?.url || "");
+    if (record.provider === "SubDL") {
+      const path = sourceUrl.searchParams.get("path") || "";
+      const parts = path.split("/");
+      if (!env.SUBDL_API_KEY || parts.length !== 4 || parts[0] !== "" || parts[1] !== "subtitle" ||
+          !/^[A-Za-z0-9_-]+$/.test(parts[2]) || !/^[A-Za-z0-9_-]+$/.test(parts[3])) {
         return json({ status: 20900, error: "subtitle download unavailable" }, 404);
       }
       target = new URL(path, "https://dl.subdl.com");
@@ -577,6 +579,7 @@ async function assrtDownloadResponse(record, env) {
       target = sourceUrl;
     } else if (sourceUrl.protocol === "https:" && sourceUrl.hostname === "dl.subdl.com" && env.SUBDL_API_KEY) {
       target = sourceUrl;
+      target.searchParams.delete("api_key");
       target.searchParams.set("api_key", env.SUBDL_API_KEY);
     } else {
       return json({ status: 20900, error: "unsupported subtitle URL" }, 404);
@@ -584,13 +587,27 @@ async function assrtDownloadResponse(record, env) {
   } catch {
     return json({ status: 20900, error: "invalid subtitle URL" }, 404);
   }
-  const response = await fetch(target.toString(), { headers: { "Accept": "*/*" } });
+
+  let response;
+  try {
+    response = await fetch(target.toString(), { headers: { "Accept": "*/*" } });
+  } catch {
+    return json({ status: 50002, error: "subtitle provider request failed" }, 502);
+  }
+  if (!response.ok) {
+    return json({
+      status: 50002,
+      error: "subtitle provider download failed",
+      provider_status: response.status,
+    }, 502);
+  }
+
   const headers = new Headers(corsHeaders);
   headers.set("Cache-Control", "no-store");
   headers.set("Content-Type", response.headers.get("Content-Type") || "application/octet-stream");
   headers.set("Content-Disposition", response.headers.get("Content-Disposition") || 'attachment; filename="subtitle"');
   headers.set("X-Content-Type-Options", "nosniff");
-  return new Response(response.body, { status: response.status, headers });
+  return new Response(response.body, { status: 200, headers });
 }
 
 function titleMatchesResponse(data) {
