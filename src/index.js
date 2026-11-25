@@ -201,7 +201,11 @@ async function inspectSubtitleFile(item, env) {
     if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
       const unpacked = await unzipSubtitleText(buffer);
       text = unpacked.text;
-      valid = unpacked.hasSubtitleFile && subtitleTextLooksUsable(text) && subtitleTextContainsChinese(text);
+      // ZIP subtitle packages are often valid even when Workers cannot
+      // inflate their compression method or decode legacy subtitle encodings.
+      // The central directory check already confirms a non-empty SRT/ASS/SSA/VTT
+      // member exists; language has been checked from provider metadata above.
+      valid = unpacked.hasSubtitleFile;
     } else {
       text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
       if (text.includes("\uFFFD")) {
